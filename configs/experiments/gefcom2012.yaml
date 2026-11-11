@@ -1,0 +1,106 @@
+# Walidacja zewnętrzna (sekcja 12 metodyki): GEFCom2012, suma 20 stref, temperatura średnia
+# z 11 stacji (godzinowa, °F). Ten sam schemat co eksperyment główny; identyfikacja osobna.
+
+name: gefcom2012
+description: Walidacja zewnętrzna na GEFCom2012, test 1.06.2007-28.06.2008.
+dataset: configs/datasets/gefcom2012.yaml
+seed: 20261111
+
+periods:
+  identification: {start: 2006-11-29, end: 2007-04-30}
+  forecast_start: 2007-05-01        # początek rozgrzewki łączenia
+  test: {start: 2007-06-01, end: 2008-06-28}
+
+forecast:
+  horizon_hours: 48
+  training_window_days: 84
+  origin_hour: 0
+  fitted_hours_saved: 168  # wartości dopasowane zapisywane w archiwum (C0 z 48, 72, 168 h)
+
+temperature_scenarios:
+  - {name: oracle, kind: oracle}
+  - {name: persistence, kind: persistence}
+  # Siatka jak w eksperymencie głównym, w °F: sd_day2 od 1,5 do 9 °F; górny koniec to poziom
+  # persystencji w tych danych (błąd średniej dobowej 9,3 °F dla D+1, 6,45 °F dla D; stosunek 0,69).
+  - {name: noisy_1.5, kind: noisy, sd_day1: 1.05, sd_day2: 1.5, rho: 0.5, draws: 10}
+  - {name: noisy_3, kind: noisy, sd_day1: 2.1, sd_day2: 3, rho: 0.5, draws: 10}
+  - {name: noisy_4.5, kind: noisy, sd_day1: 3.15, sd_day2: 4.5, rho: 0.5, draws: 10}
+  - {name: noisy_6, kind: noisy, sd_day1: 4.2, sd_day2: 6, rho: 0.5, draws: 10}
+  - {name: noisy_7.5, kind: noisy, sd_day1: 5.25, sd_day2: 7.5, rho: 0.5, draws: 10}
+  - {name: noisy_9, kind: noisy, sd_day1: 6.3, sd_day2: 9, rho: 0.5, draws: 10}
+
+# Szablony YAML (&nazwa / *nazwa) eliminują powtarzanie wspólnych ustawień
+x-arima-series: &arima_series
+  type: sarima
+  order: [1, 0, 1]
+  seasonal_order: [0, 1, 1]
+  season: 168
+  method: css
+x-arima-resid: &arima_resid
+  type: sarima
+  order: [1, 0, 1]
+  seasonal_order: [0, 1, 1]
+  season: 168
+  method: css
+
+models:
+  # --- modele bazowe (pula łączenia)
+  - name: MR_ARIMA
+    type: two_stage
+    provisional: true
+    first: {type: regression}
+    residual: *arima_resid
+  - name: ARIMA
+    provisional: true
+    <<: *arima_series
+  - name: ES_ARIMA
+    type: two_stage
+    provisional: true
+    # wariant (trend, tłumienie, inicjalizacja) wybierany w identyfikacji; start: jak w artykule
+    first: {type: exp_smoothing, trend: add, damped: false, initialization: heuristic, season: 168}
+    residual: {<<: *arima_resid, seasonal_order: [0, 0, 1]}
+  - name: SVR_ARIMA
+    type: two_stage
+    provisional: true
+    # wartości startowe jak w eksperymencie głównym; zastępuje je identyfikacja
+    first: {type: svr, kernel: poly, degree: 2, C: 12.0, epsilon: 0.076, gamma: 0.089, coef0: 1.586}
+    residual: *arima_resid
+  - name: NN_ARIMA
+    type: two_stage
+    provisional: true
+    first: {type: mlp, hidden_layer_sizes: 7, activation: relu, solver: lbfgs, alpha: 6.2e-6, tol: 3.01e-5, n_seeds: 5}
+    residual: *arima_resid
+  # --- modele odniesienia
+  - {name: SNAIVE, type: seasonal_naive, role: benchmark, lag: 168}
+  - {name: HONG, type: hong_regression, role: benchmark}
+  # parametry drzew strojone w identyfikacji (jak SVR i sieć); do tego czasu domyślne
+  - {name: LGBM, type: lightgbm, role: benchmark, provisional: true, lags: [48, 72, 168]}
+
+combination:
+  base_models: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA]
+  methods: [C0, C1, C2, C3, C4, C5, C6]  # C6: wybór modelu najlepszego w ostatnich K dobach
+  k_days: [2, 3, 7, 14, 28]
+  c0_fitted_hours: [48, 72, 168]  # C0 (artykuł), C0_H72, C0_H168
+  # pula rozszerzona (sekcja 11): czy schemat korzysta z lepszego modelu bazowego
+  extra_pools:
+    plus_hong: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, HONG]
+    # model o innej budowie (bez członu ARIMA): czy łączenie zyskuje na różnorodności błędów;
+    # C0 w tej puli: wartości dopasowane drzew są niemal idealne, więc C0 odda LGBM prawie
+    # całą wagę (ilustracja słabości wag z wartości dopasowanych)
+    plus_lgbm: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, LGBM]
+
+identification:
+  # kandydaci (order, seasonal_order); wybór na walidacji chronologicznej w okresie identyfikacji
+  arima_orders:
+    - [[1, 0, 1], [0, 1, 1]]
+    - [[1, 0, 0], [0, 1, 1]]
+    - [[2, 0, 1], [0, 1, 1]]
+    - [[1, 0, 1], [1, 1, 1]]
+    - [[1, 0, 1], [0, 0, 1]]
+    - [[1, 0, 1], [1, 0, 0]]
+  validation_origins: 20
+  n_trials: 100
+
+execution:
+  n_jobs: 2
+  output_dir: results

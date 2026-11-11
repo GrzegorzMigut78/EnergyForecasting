@@ -1,0 +1,31 @@
+# GEFCom2012, ścieżka obciążenia (Hong, Pinson, Fan, IJF 30(2), 2014).
+# Pliki w układzie konkursowym (Load_history.csv, temperature_history.csv) w data/raw/gefcom2012/;
+# pobranie: uv run --extra gefcom python scripts/fetch_gefcom2012.py (źródło: pakiet tscompdata).
+# Walidacja zewnętrzna (sekcja 12 metodyki): suma 20 stref, średnia temperatura 11 stacji.
+# W danych konkursowych jest 8 tygodni bez obciążenia (prognoza wsteczna), ostatni 22-28.11.2006.
+# Używamy najdłuższego ciągłego fragmentu: 29.11.2006-29.06.2008 (579 dób; 30.06.2008 niepełna).
+
+name: gefcom2012
+description: GEFCom2012 load track, suma stref, temperatura średnia ze stacji.
+
+source:
+  loader: gefcom2012
+  path: data/raw/gefcom2012/Load_history.csv
+  temperature:
+    path: data/raw/gefcom2012/temperature_history.csv
+    stations: null      # wszystkie
+  zones: null           # suma wszystkich stref
+  period: {start: 2006-11-29, end: 2008-06-29}
+
+units:
+  load: kW
+  temperature: "°F"
+
+dst_policy: as_is
+
+calendar:
+  country: US
+  timezone: America/New_York
+  holiday_feature:
+    exclude_weekdays: []
+    extra_month_days: []

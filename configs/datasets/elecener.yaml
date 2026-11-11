@@ -1,0 +1,57 @@
+# Zbiór ElecEner Long: godzinowe zapotrzebowanie obszaru w południowej Polsce
+# (głównie gospodarstwa domowe). Wartości przesunięte o nieznaną stałą (anonimizacja).
+# Surowy plik nie jest zmieniany: wszystkie korekty są tutaj, z uzasadnieniem.
+
+name: elecener
+description: >
+  ElecEner Long, 01.10.2001-30.06.2003, zapotrzebowanie godzinowe i średnia
+  temperatura dzienna i nocna (pomiary).
+
+source:
+  loader: excel_hourly
+  path: data/raw/ElecEner_long.xlsx
+  sheet: 0
+  date_column: Data
+  hour_column: Godzina
+  hour_base: 1
+  load_column: Zapotrzebowanie
+  temperature:
+    columns: [sr_temp_dz, sr_temp_noc]   # jak w artykule: średnia z dziennej i nocnej
+    aggregate: mean
+
+units:
+  load: "do potwierdzenia u właściciela danych"
+  temperature: "°C"
+
+dst_policy: as_is   # każda doba ma 24 godziny; sposób wyrównania nieznany
+
+calendar:
+  country: PL
+  timezone: Europe/Warsaw
+  holiday_feature:
+    exclude_weekdays: [6]          # definicja z artykułu: święta niewypadające w niedzielę
+    extra_month_days: ["12-24"]    # Wigilia, jak w pierwotnej wersji artykułu
+
+corrections:
+  exclude:
+    - start: 2001-10-01
+      end: 2001-10-31
+      reason: >
+        Nieprawdopodobny poziom 19.10 i 25-30.10.2001 (np. 757 i 793 przy typowym ok. 620),
+        seria jednogodzinnych skoków, artefakt zmiany czasu 28.10.
+  fix:
+    - timestamp: 2002-02-01 00:00
+      reason: Wartość ok. 484 zamiast ok. 600 w godzinie 1 pierwszego dnia miesiąca (wypełniacz).
+    - timestamp: 2002-03-01 00:00
+      reason: Jak wyżej.
+  flag:
+    - {timestamp: 2002-04-04 03:00, reason: jednogodzinny skok}
+    - {timestamp: 2002-09-03 10:00, reason: jednogodzinny skok}
+    - {timestamp: 2002-09-10 12:00, reason: jednogodzinny skok}
+    - {timestamp: 2002-11-03 01:00, reason: jednogodzinny skok}
+    - {timestamp: 2002-11-03 02:00, reason: jednogodzinny skok}
+    - {timestamp: 2002-11-28 08:00, reason: jednogodzinny skok}
+    - {timestamp: 2003-02-03 10:00, reason: jednogodzinny skok}
+    - {timestamp: 2003-02-08 10:00, reason: jednogodzinny skok}
+    - {timestamp: 2003-02-08 12:00, reason: jednogodzinny skok}
+    - {timestamp: 2003-02-25 12:00, reason: jednogodzinny skok}

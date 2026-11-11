@@ -1,0 +1,22 @@
+# Dane i wyniki nie trafiają do repozytorium
+data/*
+!data/README.md
+results/
+*.parquet
+*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Edytory i system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

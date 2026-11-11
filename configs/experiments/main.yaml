@@ -1,0 +1,112 @@
+# Eksperyment główny (sekcje 4-10 dokumentu metodyki).
+# Parametry oznaczone provisional: true pochodzą z pierwotnej wersji artykułu i zostaną
+# zastąpione wynikiem identyfikacji (prognozowanie identify -> identified_params).
+
+name: main
+description: Symulacja operacyjna na ElecEner Long, test 1.08.2002-29.06.2003.
+dataset: configs/datasets/elecener.yaml
+seed: 20261111
+
+periods:
+  identification: {start: 2001-11-01, end: 2002-03-31}
+  forecast_start: 2002-07-01        # początek rozgrzewki łączenia
+  test: {start: 2002-08-01, end: 2003-06-29}
+
+forecast:
+  horizon_hours: 48
+  training_window_days: 84
+  origin_hour: 0
+  fitted_hours_saved: 168  # wartości dopasowane zapisywane w archiwum (C0 z 48, 72, 168 h)
+
+temperature_scenarios:
+  - {name: oracle, kind: oracle}
+  - {name: persistence, kind: persistence}
+  # Siatka poziomów błędu prognozy temperatury (sekcja 9 metodyki): sd_day2 dla doby D+1
+  # od 0,5 do 3,5 °C; dla doby D 0,7 tej wartości (taki stosunek ma błąd persystencji w danych:
+  # 2,70 / 3,79 °C). Górny koniec odpowiada poziomowi persystencji, 0 to oracle. Wspólne liczby
+  # losowe: losowanie i jest w każdym poziomie tym samym błędem w innej skali.
+  # rho 0.5: robocza korelacja błędów D i D+1. Pasek „prognoza ok. 2002” do doprecyzowania
+  # na podstawie raportów weryfikacji ECMWF (Tech. Memo 414 i 432).
+  - {name: noisy_0.5, kind: noisy, sd_day1: 0.35, sd_day2: 0.5, rho: 0.5, draws: 10}
+  - {name: noisy_1, kind: noisy, sd_day1: 0.7, sd_day2: 1, rho: 0.5, draws: 10}
+  - {name: noisy_1.5, kind: noisy, sd_day1: 1.05, sd_day2: 1.5, rho: 0.5, draws: 10}
+  - {name: noisy_2, kind: noisy, sd_day1: 1.4, sd_day2: 2, rho: 0.5, draws: 10}
+  - {name: noisy_2.5, kind: noisy, sd_day1: 1.75, sd_day2: 2.5, rho: 0.5, draws: 10}
+  - {name: noisy_3, kind: noisy, sd_day1: 2.1, sd_day2: 3, rho: 0.5, draws: 10}
+  - {name: noisy_3.5, kind: noisy, sd_day1: 2.45, sd_day2: 3.5, rho: 0.5, draws: 10}
+
+# Szablony YAML (&nazwa / *nazwa) eliminują powtarzanie wspólnych ustawień
+x-arima-series: &arima_series
+  type: sarima
+  order: [1, 0, 1]
+  seasonal_order: [0, 1, 1]
+  season: 168
+  method: css
+x-arima-resid: &arima_resid
+  type: sarima
+  order: [1, 0, 1]
+  seasonal_order: [0, 1, 1]
+  season: 168
+  method: css
+
+models:
+  # --- modele bazowe (pula łączenia)
+  - name: MR_ARIMA
+    type: two_stage
+    provisional: true
+    first: {type: regression}
+    residual: *arima_resid
+  - name: ARIMA
+    provisional: true
+    <<: *arima_series
+  - name: ES_ARIMA
+    type: two_stage
+    provisional: true
+    # wariant (trend, tłumienie, inicjalizacja) wybierany w identyfikacji; start: jak w artykule
+    first: {type: exp_smoothing, trend: add, damped: false, initialization: heuristic, season: 168}
+    residual: {<<: *arima_resid, seasonal_order: [0, 0, 1]}
+  - name: SVR_ARIMA
+    type: two_stage
+    provisional: true
+    # z artykułu, przeliczone na standaryzowaną zmienną celu (C 805 -> 12, epsilon 5,08 -> 0,076)
+    first: {type: svr, kernel: poly, degree: 2, C: 12.0, epsilon: 0.076, gamma: 0.089, coef0: 1.586}
+    residual: *arima_resid
+  - name: NN_ARIMA
+    type: two_stage
+    provisional: true
+    first: {type: mlp, hidden_layer_sizes: 7, activation: relu, solver: lbfgs, alpha: 6.2e-6, tol: 3.01e-5, n_seeds: 5}
+    residual: *arima_resid
+  # --- modele odniesienia
+  - {name: SNAIVE, type: seasonal_naive, role: benchmark, lag: 168}
+  - {name: HONG, type: hong_regression, role: benchmark}
+  # parametry drzew strojone w identyfikacji (jak SVR i sieć); do tego czasu domyślne
+  - {name: LGBM, type: lightgbm, role: benchmark, provisional: true, lags: [48, 72, 168]}
+
+combination:
+  base_models: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA]
+  methods: [C0, C1, C2, C3, C4, C5, C6]  # C6: wybór modelu najlepszego w ostatnich K dobach
+  k_days: [2, 3, 7, 14, 28]
+  c0_fitted_hours: [48, 72, 168]  # C0 (artykuł), C0_H72, C0_H168
+  # pula rozszerzona (sekcja 11): czy schemat korzysta z lepszego modelu bazowego
+  extra_pools:
+    plus_hong: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, HONG]
+    # model o innej budowie (bez członu ARIMA): czy łączenie zyskuje na różnorodności błędów;
+    # C0 w tej puli: wartości dopasowane drzew są niemal idealne, więc C0 odda LGBM prawie
+    # całą wagę (ilustracja słabości wag z wartości dopasowanych)
+    plus_lgbm: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, LGBM]
+
+identification:
+  # kandydaci (order, seasonal_order); wybór na walidacji chronologicznej w okresie identyfikacji
+  arima_orders:
+    - [[1, 0, 1], [0, 1, 1]]
+    - [[1, 0, 0], [0, 1, 1]]
+    - [[2, 0, 1], [0, 1, 1]]
+    - [[1, 0, 1], [1, 1, 1]]
+    - [[1, 0, 1], [0, 0, 1]]
+    - [[1, 0, 1], [1, 0, 0]]
+  validation_origins: 20
+  n_trials: 100
+
+execution:
+  n_jobs: 2
+  output_dir: results
