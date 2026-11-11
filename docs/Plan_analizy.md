@@ -62,7 +62,7 @@ Odniesieniem dla sposobów łączenia jest średnia arytmetyczna (C3). W literat
 3. **Pule rozszerzone** `plus_hong` i `plus_lgbm`: te same miary i testy, opisowo.
 4. **Warianty C0 z 72 i 168 godzinami:** czy słabość C0 wynika z idei wartości dopasowanych, czy z krótkiego okna.
 5. **Wrażliwość na błąd prognozy temperatury:** krzywa MAE doby D+1 na siatce poziomów i próg opłacalności, czyli poziom błędu, przy którym model z temperaturą zrównuje się z najlepszym modelem bez temperatury. Punkt odniesienia „prognoza z około 2002 roku” wyznaczamy z raportów weryfikacji ECMWF (Tech. Memo 414 i 432) przed oceną wyników.
-6. **Korekta ARIMA:** model dwustopniowy a jego pierwszy stopień (DM).
+6. **Korekta ARIMA:** model dwustopniowy a jego pierwszy stopień (DM). Pierwsze stopnie (regresja, SVR, sieć, wygładzanie) zestawiamy też z LightGBM: wszystkie bez korekty ARIMA, strojone jako samodzielne modele (sekcja 2), na tych samych dobach. Rozdziela to przewagę wynikającą z modelu od przewagi z korekty ARIMA; LightGBM nie dostaje korekty ARIMA, bo jego reszty w oknie uczącym są prawie zerowe (dopasowanie drzew) i nie odpowiadają błędom prognozy.
 7. **Przekroje:** doba D (godziny 1-24); RMSE i MASE; typy dni (robocze, soboty, niedziele, święta, dni pomostowe); miesiące; godziny horyzontu; bez godzin oznaczonych jako podejrzane.
 8. **Stabilność wag:** zmienność z doby na dobę, odsetek wag ujemnych, częstość zmiany modelu w C6.
 9. **Koszt obliczeń:** czas dopasowania i prognozy modeli.
