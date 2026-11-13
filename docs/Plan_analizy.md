@@ -1,6 +1,6 @@
 # Plan analizy
 
-Wersja 2 z 13.11.2026 (po uwagach audytora i Profesora), do zamrożenia przed obliczeniem prognoz testowych.
+Wersja 2 z 13.11.2026 (po uwagach audytora i Profesora), zamrożona 13.11.2026 przed obliczeniem prognoz testowych (etykieta `plan-v2`).
 
 Plan ustala z góry, które porównania są wnioskami głównymi, a które analizami dodatkowymi. Zamrożenie polega na oznaczeniu stanu repozytorium etykietą z datą przed obliczeniem prognoz testowych. Rodziny hipotez są zapisane także w konfiguracji eksperymentu (`evaluation.families`), więc raport liczy dokładnie to, co tu ustalono. Każda późniejsza zmiana trafia do sekcji 9 z datą i uzasadnieniem, a w artykule opisujemy ją jako odstępstwo od planu.
 
@@ -98,7 +98,7 @@ Odłożone (archiwum wystarcza, liczymy na prośbę recenzenta): rozkład różn
 ## 6. Kolejność obliczeń i dostęp do wyników
 
 1. **Przebieg próbny na rozgrzewce** (test próbny 10-31.07.2002, poza okresem testu): tu oglądamy wszystkie tabele i wykresy, czasy i pamięć. Wykonany 13.11.2026 (31 dób, bez awarii, około 25 minut); poprawki przed zamrożeniem: reguła kwietnia w ocenie, zbiór dób zestawienia opisowego, próg opłacalności tylko na pełnym zbiorze dób, opis kodów zbieżności w raporcie stanu.
-2. **Zamrożenie planu:** etykieta w repozytorium.
+2. **Zamrożenie planu:** 13.11.2026, etykieta `plan-v2` w repozytorium (zatwierdził Grzegorz Migut). Od tej chwili każda zmiana planu, kodu analizy lub konfiguracji wpływająca na wyniki trafia do sekcji 9.
 3. **Test kwartałami:** sierpień-październik, listopad-styczeń, luty-kwiecień, maj-czerwiec. Między kwartałami wyłącznie kontrola techniczna (`prognozowanie status`: kompletność, awarie, zbieżność, czasy, rozmiar archiwum), bez miar dokładności.
 4. **Ocena dokładności** raz, po ostatnim kwartale, zgodnie z tym planem.
 5. **Błąd w kodzie wykryty w trakcie:** poprawka, przeliczenie dotkniętych modeli od początku testu i wpis w sekcji 9.
