@@ -121,4 +121,10 @@ Analiza wrażliwości: kontrasty H1-H3 bez dób 1-6.08.2002 i bez 20 dób porów
 
 ## 9. Odstępstwa od planu
 
-(puste)
+Zmiany po zamrożeniu (etykieta `plan-v2`), z datą i uzasadnieniem.
+
+| Data | Zmiana | Wpływ na wyniki |
+|---|---|---|
+| 13.11.2026 | Skrypt kolejki: Ctrl+C przerywa także uruchomione zadanie (`bcf5766`). | Brak: infrastruktura, kod analizy bez zmian. |
+| 13.11.2026 | Ocena: reguła wyłączonych okresów (sekcja 1) była wywoływana przed dołączeniem kolumny bloku horyzontu, przez co pierwsza ocena przebiegu głównego przerwała się błędem, zanim zapisała jakikolwiek wynik. Poprawka kolejności i test regresji; definicja reguły bez zmian. | Brak: żadna tabela ani miara nie powstała przed poprawką. |
+| 13.11.2026 | Jedno wydanie (1.11.2002) z niedomkniętą optymalizacją pierwszego stopnia ES_ARIMA (kod 1); prognoza powstała i zostaje w ocenie, jak każda inna. | Zapis informacyjny, bez przeliczeń. |
