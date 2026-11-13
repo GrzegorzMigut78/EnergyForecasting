@@ -21,7 +21,7 @@ Wydanie o północy jest konwencją symulacji. W praktyce opisanej w artykule da
 - **Wpływ kwietnia 2002 na wagi** (uwaga audytora): przy K ≤ 7 historia wag dla wydania z 1.08.2002 sięga wydań, których okna uczące zaczynają się najwcześniej 1.05.2002, więc analiza główna (K = 2, 3, 7) nie widzi kwietnia. Dla wariantów dodatkowych z K = 14 i K = 28 kwiecień wchodzi do okien wydań używanych jako historia wag do 7.08 i 21.08.2002.
 - **Reguła daty startu** (zależy wyłącznie od odpowiedzi właściciela danych, nie od wyników):
   - kwiecień potwierdzony: test od 1.05.2002 (425 dób), rozgrzewka dopisana od 2.04.2002; prognozy dopisujemy do tego samego archiwum;
-  - kwiecień błędny albo brak odpowiedzi: analiza główna od 1.08.2002; warianty z K = 14 od 8.08.2002, z K = 28 od 22.08.2002.
+  - kwiecień błędny albo brak odpowiedzi: analiza główna od 1.08.2002; warianty z K = 14 od 8.08.2002, z K = 28 od 22.08.2002. W kodzie reguła ogólna (`evaluation.excluded_data`): para (wariant, doba wydania, blok) wchodzi do oceny tylko wtedy, gdy żadne okno uczące jej prognozy, łącznie z oknami prognoz z historii wag, nie obejmuje kwietnia 2002; daty 1.08, 8.08 i 22.08 wynikają z niej same (test w kodzie).
 - **Pula główna:** MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA. **Benchmarki:** SNAIVE, HONG, LGBM.
 - **Modele pomocnicze:** HONG_ARIMA (HONG z tą samą korektą reszt co MR_ARIMA, do puli `plus_hong`), ARIMA_S24 (okres sezonowy 24 h, ablacja dla R1).
 - **Pule rozszerzone** (opisowo): `plus_hong` (pula główna + HONG_ARIMA), `plus_lgbm` (pula główna + LGBM).
@@ -37,7 +37,7 @@ Wydanie o północy jest konwencją symulacji. W praktyce opisanej w artykule da
 ## 3. Analiza główna (potwierdzająca)
 
 - **Miara:** MAE doby D+1 (godziny 25-48).
-- **Zbiór dób:** pary (doba wydania, blok) wspólne dla wariantów występujących w rodzinach hipotez. Brak wariantu dodatkowego nie wycina dób z analizy głównej. Tabela pokrycia podaje dla każdego planowanego wariantu doby planowane, dostępne i użyte.
+- **Zbiór dób:** pary (doba wydania, blok) wspólne dla wariantów występujących w rodzinach hipotez. Brak wariantu dodatkowego nie wycina dób z analizy głównej. Zestawienie wszystkich wariantów (opisowe) liczymy na tych samych dobach; warianty bez kompletu tych dób (krótsza historia, reguła kwietnia) na swoich dobach, z liczbą dób w tabeli, i nie porównujemy ich w progu opłacalności. Profil K liczymy na dobach wspólnych dla wszystkich K. Tabela pokrycia podaje dla każdego planowanego wariantu doby planowane, dostępne i użyte.
 - **Rodziny hipotez** (różnica = wariant - odniesienie rodziny; ujemna: wariant lepszy):
 
 | Rodzina | Pytanie | Odniesienie | Porównania |
@@ -97,7 +97,7 @@ Odłożone (archiwum wystarcza, liczymy na prośbę recenzenta): rozkład różn
 
 ## 6. Kolejność obliczeń i dostęp do wyników
 
-1. **Przebieg próbny na rozgrzewce** (test próbny 10-31.07.2002, poza okresem testu): tu oglądamy wszystkie tabele i wykresy, czasy i pamięć.
+1. **Przebieg próbny na rozgrzewce** (test próbny 10-31.07.2002, poza okresem testu): tu oglądamy wszystkie tabele i wykresy, czasy i pamięć. Wykonany 13.11.2026 (31 dób, bez awarii, około 25 minut); poprawki przed zamrożeniem: reguła kwietnia w ocenie, zbiór dób zestawienia opisowego, próg opłacalności tylko na pełnym zbiorze dób, opis kodów zbieżności w raporcie stanu.
 2. **Zamrożenie planu:** etykieta w repozytorium.
 3. **Test kwartałami:** sierpień-październik, listopad-styczeń, luty-kwiecień, maj-czerwiec. Między kwartałami wyłącznie kontrola techniczna (`prognozowanie status`: kompletność, awarie, zbieżność, czasy, rozmiar archiwum), bez miar dokładności.
 4. **Ocena dokładności** raz, po ostatnim kwartale, zgodnie z tym planem.
@@ -109,7 +109,8 @@ Odłożone (archiwum wystarcza, liczymy na prośbę recenzenta): rozkład różn
 Przed zamrożeniem planu część dób testowych była oglądana:
 - kontrola wygładzania wykładniczego na 15 losowo wybranych dobach testu (daty nie zostały zapisane); wpłynęła na decyzję o wyborze wariantu wygładzania w identyfikacji (decyzja 12);
 - porównanie CSS z dokładną wiarygodnością na 20 dobach: 2002-08-20, 08-21, 08-25, 09-17, 10-09, 10-28, 10-29, 11-08, 11-19, 12-03, 2003-01-03, 01-16, 02-15, 03-10, 04-13, 04-26, 05-05, 05-21, 06-06, 06-09 (decyzja 9);
-- przebiegi techniczne kodu na parametrach wstępnych, które objęły doby wydania 1-6.08.2002 (także przebieg audytora 26.07-4.08.2002).
+- przebiegi techniczne kodu na parametrach wstępnych, które objęły doby wydania 1-6.08.2002 (także przebieg audytora 26.07-4.08.2002);
+- kontrola optymalizatora CSS (13.11.2026) na oknie uczącym kończącym się 14.10.2002: porównane wyłącznie wartości funkcji celu, parametry i prognozy dwóch optymalizatorów między sobą, bez porównania z obserwacjami.
 
 Analiza wrażliwości: kontrasty H1-H3 bez dób 1-6.08.2002 i bez 20 dób porównania CSS z dokładną wiarygodnością. Dób kontroli wygładzania nie da się wykluczyć, bo ich daty nie zostały zapisane.
 
