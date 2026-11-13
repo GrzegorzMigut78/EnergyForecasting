@@ -41,7 +41,10 @@ def clean_of_excluded(
         return ok
     origin = pd.to_datetime(frame["origin"]).dt.normalize()
     k = frame["model"].str.extract(_K)["k"].astype(float).fillna(0)
-    b = np.where(frame["block"] == DAY2, 2, 1)
+    if "block" in frame:
+        b = np.where(frame["block"].isin([DAY2, 2]), 2, 1)
+    else:  # prognozy z archiwum przed dołączeniem obserwacji: blok z godziny horyzontu
+        b = np.where(frame["horizon"] > 24, 2, 1)
     back = window_days + np.where(k > 0, k + b - 1, 0)
     start = origin - pd.to_timedelta(back, unit="D")
     last = origin - pd.Timedelta(days=1)

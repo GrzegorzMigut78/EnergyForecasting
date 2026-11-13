@@ -118,8 +118,9 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
         fc = pd.concat(parts, ignore_index=True)
         # plan, sekcja 1: bez prognoz, których okna uczące (także w historii wag) obejmują
         # wyłączone okresy danych (kwiecień 2002 bez potwierdzenia)
+        fc = mt.attach_actuals(fc, actuals)  # tu powstaje kolumna block
         fc = fc[an.clean_of_excluded(fc, excluded, cfg.forecast.training_window_days)]
-        return mt.attach_actuals(fc, actuals).merge(scale, left_on="origin", right_index=True)
+        return fc.merge(scale, left_on="origin", right_index=True)
 
     out_dir = run_dir / "report"
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)

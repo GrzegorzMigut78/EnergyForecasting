@@ -192,3 +192,18 @@ def test_april_rule_first_clean_origins():
     first_d = f[ok & (f["block"] != DAY2)].groupby("model")["origin"].min()
     assert first_d["C1_K7"] == pd.Timestamp("2002-07-31")
     assert clean_of_excluded(f, [], 84).all()
+
+
+def test_april_rule_works_on_raw_archive_rows_with_horizon_only():
+    """Regresja 13.11.2026: ocena wywoływała regułę przed dołączeniem kolumny block."""
+    from prognozowanie.evaluate.analyses import clean_of_excluded
+
+    april = [(pd.Timestamp("2002-04-01"), pd.Timestamp("2002-04-30"))]
+    f = pd.DataFrame(
+        {
+            "origin": pd.to_datetime(["2002-07-31", "2002-07-31", "2002-08-01"]),
+            "model": ["C1_K7", "C1_K7", "C1_K7"],
+            "horizon": [5, 30, 30],
+        }
+    )
+    assert clean_of_excluded(f, april, 84).tolist() == [True, False, True]
