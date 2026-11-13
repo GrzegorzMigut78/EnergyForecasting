@@ -70,32 +70,56 @@ def daily_loss(df: pd.DataFrame, loss: str = "abs") -> pd.DataFrame:
     return d.pivot_table(index="origin", columns="model", values="loss", aggfunc="mean")
 
 
-def diebold_mariano(l1: np.ndarray, l2: np.ndarray, max_lag: int | None = None) -> dict:
-    """Test DM z wariancją Neweya-Westa i poprawką Harveya, Leybourne'a i Newbolda (h = 1).
+def diebold_mariano(
+    l1: np.ndarray,
+    l2: np.ndarray,
+    max_lag: int | None = None,
+    dates: pd.DatetimeIndex | None = None,
+    h: int = 1,
+    hln: bool = True,
+) -> dict:
+    """Test DM z wariancją Neweya-Westa i poprawką Harveya, Leybourne'a i Newbolda.
 
-    l1, l2: dzienne straty dwóch modeli (te same doby). Ujemna statystyka: model 1 lepszy.
+    l1, l2: dzienne straty dwóch modeli. Ujemna statystyka: model 1 lepszy.
+    dates: daty dób; luki w datach (doby wykluczone) są uwzględniane w autokowariancjach
+    według rzeczywistych odstępów, a nie kolejności wierszy. h: horyzont w poprawce HLN
+    (konwencja główna h = 1; kontrola h = 2: blok D+1 to druga doba od końca historii).
     """
     d = np.asarray(l1, float) - np.asarray(l2, float)
-    d = d[np.isfinite(d)]
-    n = len(d)
+    if dates is not None:
+        ser = pd.Series(d, index=pd.DatetimeIndex(dates)).dropna().sort_index()
+        cal = pd.date_range(ser.index.min(), ser.index.max(), freq="D") if len(ser) else ser.index
+        full = ser.reindex(cal).to_numpy()
+    else:
+        full = d[np.isfinite(d)]
+    ok = np.isfinite(full)
+    n = int(ok.sum())
     if n < 10:
         return {"n": n, "mean_diff": np.nan, "dm": np.nan, "p_value": np.nan}
+    mean = float(np.nanmean(full))
+    if np.allclose(full[ok], full[ok][0], rtol=0, atol=1e-12):
+        # stała różnica (np. identyczne straty): brak zmienności, rozstrzyga sam znak
+        dm0 = 0.0 if mean == 0 else float(np.sign(mean) * np.inf)
+        return {"n": n, "mean_diff": mean, "dm": dm0, "p_value": 1.0 if mean == 0 else 0.0}
     L = max_lag if max_lag is not None else int(np.floor(n ** (1 / 3)))
-    dc = d - d.mean()
-    gamma0 = dc @ dc / n
-    lr = gamma0
+    dc = np.where(ok, full - mean, 0.0)
+    lr = dc @ dc / n
     for lag in range(1, L + 1):
-        g = dc[lag:] @ dc[:-lag] / n
+        g = dc[lag:] @ dc[:-lag] / n  # pary z luką wnoszą zero (iloczyn z zerem)
         lr += 2 * (1 - lag / (L + 1)) * g
-    dm = d.mean() / np.sqrt(lr / n)
-    hln = dm * np.sqrt((n - 1) / n)  # HLN dla h = 1: (n + 1 - 2h + h(h - 1)/n) / n
-    p = 2 * stats.t.sf(abs(hln), df=n - 1)
+    if lr <= 0:
+        return {"n": n, "mean_diff": mean, "dm": np.nan, "p_value": np.nan}
+    dm = mean / np.sqrt(lr / n)
+    if hln:
+        dm = dm * np.sqrt((n + 1 - 2 * h + h * (h - 1) / n) / n)
+    p = 2 * stats.t.sf(abs(dm), df=n - 1)
     return {
         "n": n,
-        "mean_diff": float(d.mean()),
-        "dm": float(hln),
+        "mean_diff": mean,
+        "dm": float(dm),
         "p_value": float(p),
         "nw_lags": L,
+        "gaps": int((~ok).sum()),
     }
 
 
@@ -105,5 +129,12 @@ def dm_table(losses: pd.DataFrame, reference: str) -> pd.DataFrame:
         if m == reference:
             continue
         ok = losses[[m, reference]].dropna()
-        rows.append({"model": m, **diebold_mariano(ok[m].to_numpy(), ok[reference].to_numpy())})
+        rows.append(
+            {
+                "model": m,
+                **diebold_mariano(
+                    ok[m].to_numpy(), ok[reference].to_numpy(), dates=pd.DatetimeIndex(ok.index)
+                ),
+            }
+        )
     return pd.DataFrame(rows).set_index("model").sort_values("mean_diff")

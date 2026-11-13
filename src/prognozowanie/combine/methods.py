@@ -22,35 +22,45 @@ def ols(F_train, y_train, F):
 def simplex(F_train, y_train, F):
     """C2: wagi nieujemne sumujące się do 1, bez wyrazu wolnego (średnia ważona).
 
-    Rozwiązanie dokładne i deterministyczne: dla każdego podzbioru modeli liczymy
-    najmniejsze kwadraty z warunkiem sumy wag = 1 (układ KKT) i wybieramy najlepsze
-    rozwiązanie z nieujemnymi wagami. Przy 5 modelach to 31 małych układów równań.
-    (SLSQP potrafi po cichu zwrócić punkt startowy, ta metoda nie ma tego trybu awarii.)
+    Rozwiązanie dokładne i deterministyczne: dla każdego podzbioru modeli (ściany sympleksu)
+    liczymy najmniejsze kwadraty z warunkiem sumy wag = 1 i wybieramy najlepsze rozwiązanie
+    z nieujemnymi wagami. Przy 5 modelach to 31 małych zadań.
+
+    Warunek sumy eliminujemy podstawieniem w = e_ostatni + B v (B: różnice kolumn), więc
+    każde zadanie to zwykłe najmniejsze kwadraty na macierzy błędów, bez równań normalnych
+    i bez mieszania skali błędów (kwadraty jednostki) z jedynkami warunku. Wynik nie zależy
+    od jednostki zapotrzebowania (kW czy MW); poprzednia wersja (układ KKT na E'E) zależała
+    od niej przy dużych wartościach (uwaga audytora z 11.11.2026).
+    (SLSQP potrafi po cichu zwrócić punkt startowy; ta metoda nie ma tego trybu awarii.)
     """
     k = F_train.shape[1]
     if k > 10:
         raise ValueError("dokładne wagi C2 przewidziane dla co najwyżej 10 modeli")
-    # przy sumie wag = 1: F w - y = E w, gdzie E = macierz błędów prognoz. Praca na błędach
-    # (rząd 10-30) zamiast na poziomach (rząd 500) daje dobrze uwarunkowany układ.
+    # przy sumie wag = 1: F w - y = E w, gdzie E = macierz błędów prognoz
     E = F_train - y_train[:, None]
-    G = E.T @ E
+    scale = float(np.sqrt(np.mean(E**2)))
+    if scale > 0:
+        E = E / scale  # wspólny czynnik: nie zmienia rozwiązania, poprawia skalę liczb
     best_w, best_sse = None, np.inf
     for size in range(1, k + 1):
         for subset in combinations(range(k), size):
             s = list(subset)
-            kkt = np.zeros((size + 1, size + 1))
-            kkt[:size, :size] = 2 * G[np.ix_(s, s)]
-            kkt[:size, size] = 1.0
-            kkt[size, :size] = 1.0
-            rhs = np.r_[np.zeros(size), 1.0]
-            sol = np.linalg.lstsq(kkt, rhs, rcond=None)[0][:size]
-            if np.any(sol < -1e-12):
+            Es = E[:, s]
+            if size == 1:
+                sol = np.ones(1)
+            else:
+                # w = e_last + B v, B = [I; -1]: E w = E[:, last] + (E[:, :-1] - E[:, last]) v
+                last = Es[:, -1]
+                D = Es[:, :-1] - last[:, None]
+                v = np.linalg.lstsq(D, -last, rcond=None)[0]
+                sol = np.r_[v, 1.0 - v.sum()]
+            if np.any(sol < -1e-10):
                 continue
             w = np.zeros(k)
             w[s] = np.clip(sol, 0.0, None)
             w /= w.sum()
-            sse = float(np.sum((F_train @ w - y_train) ** 2))
-            if sse < best_sse:
+            sse = float(np.sum((E @ w) ** 2))
+            if sse < best_sse * (1 - 1e-12):
                 best_w, best_sse = w, sse
     return F @ best_w, best_w, 0.0
 
@@ -81,3 +91,22 @@ def select_best(F_train, y_train, F):
     w = np.zeros(F_train.shape[1])
     w[int(np.argmin(mse))] = 1.0
     return F @ w, w, 0.0
+
+
+def calibrate_level(F_train, y_train, F):
+    """C7: średnia z korektą poziomu, C3 + b; b = średnia historyczna różnica y - C3
+    (estymator MNK samego wyrazu wolnego przy równych wagach)."""
+    k = F_train.shape[1]
+    b = float(np.mean(y_train - F_train.mean(axis=1)))
+    return F.mean(axis=1) + b, np.full(k, 1.0 / k), b
+
+
+def calibrate_affine(F_train, y_train, F):
+    """C8: a + b * C3 (MNK na historii): poziom i wspólna skala przy równych udziałach
+    modeli. Porównanie z C1 pokazuje, czy różnicowanie wag modeli wnosi coś ponad kalibrację
+    średniej."""
+    k = F_train.shape[1]
+    m = F_train.mean(axis=1)
+    A = np.column_stack([np.ones(len(m)), m])
+    (a, b), *_ = np.linalg.lstsq(A, y_train, rcond=None)
+    return a + b * F.mean(axis=1), np.full(k, b / k), float(a)

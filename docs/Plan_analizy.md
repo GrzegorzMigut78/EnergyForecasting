@@ -1,87 +1,122 @@
 # Plan analizy
 
-Wersja robocza z 11.11.2026, do zamrożenia przed uruchomieniem przebiegu głównego.
+Wersja 2 z 13.11.2026 (po uwagach audytora i Profesora), do zamrożenia przed obliczeniem prognoz testowych.
 
-Plan ustala z góry, które porównania są wnioskami głównymi, a które analizami dodatkowymi. Zamrożenie polega na zapisaniu go w repozytorium (commit z datą) przed policzeniem prognoz testowych. Każda późniejsza zmiana trafia do sekcji 7 z datą i uzasadnieniem, a w artykule opisujemy ją jako odstępstwo od planu.
+Plan ustala z góry, które porównania są wnioskami głównymi, a które analizami dodatkowymi. Zamrożenie polega na oznaczeniu stanu repozytorium etykietą z datą przed obliczeniem prognoz testowych. Rodziny hipotez są zapisane także w konfiguracji eksperymentu (`evaluation.families`), więc raport liczy dokładnie to, co tu ustalono. Każda późniejsza zmiana trafia do sekcji 9 z datą i uzasadnieniem, a w artykule opisujemy ją jako odstępstwo od planu.
 
 ## 1. Pytanie badawcze
 
-Czy w warunkach operacyjnych (prognoza wydawana o północy na 48 godzin, codzienna estymacja na oknie 84 dób, wyłącznie informacja dostępna w chwili prognozy) łączenie prognoz pięciu modeli z pierwotnej wersji artykułu daje dokładniejszą prognozę na dobę D+1 niż modele pojedyncze, i który sposób łączenia jest najlepszy?
+Czy w warunkach operacyjnych (prognoza wydawana o północy na 48 godzin, codzienna estymacja na oknie 84 dób, wyłącznie informacja dostępna w chwili prognozy) regresja łącząca prognozy pięciu modeli z pierwotnej wersji artykułu daje dokładniejszą prognozę na dobę D+1 niż modele pojedyncze i niż zwykła średnia tych prognoz?
 
-Odniesieniem dla sposobów łączenia jest średnia arytmetyczna (C3). W literaturze często wygrywa ona z wagami estymowanymi („zagadka łączenia prognoz”: Stock i Watson 2004; Smith i Wallis 2009; Claeskens i in. 2016), więc to ona jest poprzeczką, którą metoda z wagami musi przeskoczyć.
+Metodą artykułu jest regresja łącząca: współczynniki regresji na prognozach z ostatnich 2 dób są wagami modeli (C1, K = 2), kontrolnie z 3 i 7 dób. Wersja pierwotna liczyła tę regresję na wartościach dopasowanych (C0). Średnia arytmetyczna (C3) jest punktem odniesienia, którego wymagają recenzenci; w literaturze często wygrywa ona z wagami estymowanymi („zagadka łączenia prognoz”: Stock i Watson 2004; Smith i Wallis 2009; Claeskens i in. 2016). Teza artykułu zostanie sformułowana po wynikach, ale hipotezy i testy są ustalone tutaj.
+
+Wydanie o północy jest konwencją symulacji. W praktyce opisanej w artykule dane obejmują okres do północy, praca zaczyna się o 6:00, a zamówienie składa się do 11:00.
 
 ## 2. Dane, okresy, prognozy
 
-- **Zbiór główny:** ElecEner Long z korektami z `configs/datasets/elecener.yaml`.
-- **Identyfikacja** (struktury i hiperparametry wszystkich modeli, także benchmarku LightGBM): 1.11.2001-31.03.2002.
-- **Rozgrzewka łączenia:** od 1.07.2002.
-- **Test:** 1.08.2002-29.06.2003 (333 doby). Data startu testu zależy wyłącznie od odpowiedzi właściciela danych w sprawie kwietnia 2002, nie od wyników:
-  - kwiecień potwierdzony jako poprawny: test od 1.05.2002 (425 dób); prognozy dla dodatkowych dób dopisujemy do tego samego archiwum;
-  - kwiecień uznany za błędny: test od 22.08.2002 (312 dób), żeby kwiecień nie wchodził do okien uczących prognoz używanych jako historia wag;
-  - brak odpowiedzi przed oceną: wariant 1.08.2002, z opisem wpływu kwietnia na wagi z początku sierpnia jako ograniczeniem.
-- **Pula główna:** MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA.
-- **Benchmarki:** SNAIVE, HONG, LGBM.
-- **Pule rozszerzone** (analiza dodatkowa): `plus_hong`, `plus_lgbm`.
-- **Sposoby łączenia:**
-  - C0: wagi z wartości dopasowanych, procedura artykułu, 48 h; warianty C0_H72 i C0_H168;
-  - C1: regresja na prognozach;
-  - C2: wagi nieujemne sumujące się do 1;
-  - C3: średnia;
-  - C4: mediana;
-  - C5: wagi odwrotne do MSE;
-  - C6: wybór modelu najlepszego w ostatnich K dobach.
-  - Dla C1, C2, C5 i C6: K ∈ {2, 3, 7, 14, 28}.
-- **Scenariusze temperatury:**
-  - temperatura zmierzona (oracle);
-  - persystencja;
-  - siatka błędu losowego: odchylenie dla D+1 od 0,5 do 3,5 °C co 0,5 °C, dla D 0,7 tej wartości, 10 losowań na poziom, wspólne liczby losowe.
+- **Zbiór główny:** ElecEner Long z korektami z `configs/datasets/elecener.yaml`. Plik Short dotyczy innego obszaru; służy wyłącznie do rekonstrukcji wyniku pierwszej wersji (sekcja 4, punkt 14).
+- **Identyfikacja** (struktury i hiperparametry wszystkich modeli): 1.11.2001-31.03.2002. Doby walidacyjne rozłożone równomiernie na dostępną część okresu (od pierwszej doby z pełnym oknem), z krokiem niebędącym wielokrotnością tygodnia; ich daty zapisuje wynik identyfikacji.
+- **Strojenie** SVR, sieci i LightGBM: Optuna (100 prób) na pierwszym stopniu przy temperaturze zmierzonej, potem sito: 5 najlepszych kandydatów sprawdzanych jako pełny model (z korektą ARIMA reszt; LightGBM sam) przy temperaturze z persystencji, na tych samych dobach walidacyjnych.
+- **Rozgrzewka łączenia:** od 1.07.2002. **Test:** 1.08.2002-29.06.2003 (333 doby).
+- **Wpływ kwietnia 2002 na wagi** (uwaga audytora): przy K ≤ 7 historia wag dla wydania z 1.08.2002 sięga wydań, których okna uczące zaczynają się najwcześniej 1.05.2002, więc analiza główna (K = 2, 3, 7) nie widzi kwietnia. Dla wariantów dodatkowych z K = 14 i K = 28 kwiecień wchodzi do okien wydań używanych jako historia wag do 7.08 i 21.08.2002.
+- **Reguła daty startu** (zależy wyłącznie od odpowiedzi właściciela danych, nie od wyników):
+  - kwiecień potwierdzony: test od 1.05.2002 (425 dób), rozgrzewka dopisana od 2.04.2002; prognozy dopisujemy do tego samego archiwum;
+  - kwiecień błędny albo brak odpowiedzi: analiza główna od 1.08.2002; warianty z K = 14 od 8.08.2002, z K = 28 od 22.08.2002.
+- **Pula główna:** MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA. **Benchmarki:** SNAIVE, HONG, LGBM.
+- **Modele pomocnicze:** HONG_ARIMA (HONG z tą samą korektą reszt co MR_ARIMA, do puli `plus_hong`), ARIMA_S24 (okres sezonowy 24 h, ablacja dla R1).
+- **Pule rozszerzone** (opisowo): `plus_hong` (pula główna + HONG_ARIMA), `plus_lgbm` (pula główna + LGBM).
+- **Sposoby łączenia** (liczone wszystkie; w analizie głównej tylko C0, C1 i C3):
+  - C0: regresja na wartościach dopasowanych z 48 h okna (procedura pierwotna); warianty C0_H72, C0_H168;
+  - C1: regresja na prognozach tego samego bloku z ostatnich K dób;
+  - C2: wagi nieujemne sumujące się do 1; C3: średnia; C4: mediana; C5: wagi odwrotne do MSE;
+  - C6: wybór modelu o najmniejszym MSE w ostatnich K dobach (MSE, bo wszystkie metody z estymowanymi wagami minimalizują kwadraty błędów, a C6 jest granicą C5);
+  - C7: średnia z korektą poziomu (C3 + b); C8: a + b · C3 (poziom i wspólna skala przy równych udziałach modeli);
+  - K ∈ {2, 3, 7, 14, 28} dla C1, C2, C5-C8; analiza główna: K ∈ {2, 3, 7}.
+- **Scenariusze temperatury:** zmierzona (oracle), persystencja, siatka błędu losowego (odchylenie dla D+1 od 0,5 do 3,5 °C co 0,5 °C, dla D 0,7 tej wartości, 10 losowań na poziom, wspólne liczby losowe).
 
 ## 3. Analiza główna (potwierdzająca)
 
-- **Miara:** MAE doby D+1 (godziny 25-48), liczone na parach (doba wydania, blok) wspólnych dla wszystkich porównywanych wariantów.
-- **Pula:** główna.
-- **Scenariusze:** temperatura zmierzona i persystencja, oba raportowane jako główne. Wniosek uznajemy za potwierdzony, gdy kierunek różnicy jest ten sam w obu scenariuszach. Gdy kierunki się różnią, wynik opisujemy jako zależny od jakości informacji o temperaturze.
-- **Test:** Diebolda-Mariano na dziennych stratach (średnie MAE doby D+1), wariancja Neweya-Westa, poprawka Harveya, Leybourne'a i Newbolda, test dwustronny, α = 0,05 po poprawce Holma w obrębie rodziny.
-- **Rodziny hipotez** (każde porównanie: wariant kontra C3):
+- **Miara:** MAE doby D+1 (godziny 25-48).
+- **Zbiór dób:** pary (doba wydania, blok) wspólne dla wariantów występujących w rodzinach hipotez. Brak wariantu dodatkowego nie wycina dób z analizy głównej. Tabela pokrycia podaje dla każdego planowanego wariantu doby planowane, dostępne i użyte.
+- **Rodziny hipotez** (różnica = wariant - odniesienie rodziny; ujemna: wariant lepszy):
 
-| Rodzina | Pytanie | Porównania |
-|---|---|---|
-| H1 | Czy wagi estymowane na prognozach wygrywają ze średnią? | C1, C2, C5 × 5 wartości K (15) |
-| H2 | Czy procedura pierwotna (C0, 48 h) jest gorsza od średniej? | C0 (1) |
-| H3 | Czy średnia wygrywa z modelami pojedynczymi i benchmarkami? | 5 modeli bazowych + SNAIVE, HONG, LGBM (8) |
-| H4 | Czy wybór modelu wygrywa z łączeniem? | C6 × 5 wartości K (5) |
+| Rodzina | Pytanie | Odniesienie | Porównania |
+|---|---|---|---|
+| H1 | Czy regresja łącząca wygrywa ze zwykłą średnią? | C3 | C1_K2, C1_K3, C1_K7 (3) |
+| H2 | Czy wagi z wartości dopasowanych są gorsze od wag z prognoz, na tych samych 48 obserwacjach (doby D-2 i D-1)? | C1_K2 | C0 (1) |
+| H3 | Czy regresja łącząca wygrywa z każdym modelem pojedynczym i benchmarkiem? | C1_K2 | MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, SNAIVE, HONG, LGBM (8) |
 
-- **Zbiór modeli najlepszych (MCS):** metoda T_max, α = 0,10, na modelach pojedynczych i wariantach łączenia puli głównej.
-- **Przedziały ufności różnic względem C3:** bootstrap blokowy (bloki 7 dób, 2000 powtórzeń).
-- **Interpretacja K:** K nie jest parametrem wybieranym na teście. Raportujemy wszystkie wartości i opisujemy przebieg błędu w funkcji K: krótka historia daje szum w wagach, długa daje wagi nieaktualne.
+- **Test:** Diebolda-Mariano na dziennych stratach (MAE bloku D+1 dla każdej doby wydania; w scenariuszu losowym średnia po losowaniach), wariancja Neweya-Westa z ⌊n^(1/3)⌋ opóźnieniami liczona według rzeczywistych odstępów dat (luki nie sklejają dób), poprawka Harveya, Leybourne'a i Newbolda z h = 1, rozkład t z n - 1 stopniami swobody, test dwustronny.
+- **Kontrole konwencji testu** (raportowane obok, bez zmiany reguły): h = 2 w poprawce HLN, pasmo 14 dób, wariancja HAC bez HLN.
+- **Poprawka na wielokrotność:** Holm w obrębie rodziny, z planowaną liczebnością rodziny. Kontrast, którego nie da się ocenić, zostaje w tabeli jako nieoceniony i liczy się jak p = 1.
+- **Reguła potwierdzenia w dwóch scenariuszach:** dla każdego kontrastu bierzemy większą z dwóch dwustronnych wartości p (temperatura zmierzona, persystencja), stosujemy Holma w rodzinie (α = 0,05) i wymagamy zgodnego kierunku różnicy w obu scenariuszach. Efekty i przedziały podajemy dla obu scenariuszy. Kontrast potwierdzony w jednym scenariuszu opisujemy jako zależny od jakości informacji o temperaturze.
+- **Zbiór modeli najlepszych (MCS):** T_max, α = 0,10, na wariantach z rodzin hipotez; interpretujemy go jako zbiór wariantów, których procedura nie wyeliminowała.
+- **Przedziały ufności różnic względem C3:** bootstrap blokowy po dobach kalendarza (bloki 7 dób, 2000 powtórzeń; doby wykluczone zostają w kalendarzu jako puste).
+- **Interpretacja K:** K nie jest wybierane na teście; K = 2 to wariant artykułu.
 
 ## 4. Analizy dodatkowe (opisowe, bez wniosków potwierdzających)
 
-1. **Pojedyncze okno 48 h:** odsetek dób, w których łączenie miałoby mniejsze MAE z 48 godzin niż najlepszy model bazowy wybrany po fakcie (układ oceny z pierwotnej wersji artykułu). Pokazuje, jak niepewny był wniosek z jednego okna.
-2. **Różnorodność błędów:** rozkład MSE średniej na średni MSE modeli i różnorodność (Krogh i Vedelsby 1995), średnia korelacja błędów; dla puli głównej i pul rozszerzonych.
-3. **Pule rozszerzone** `plus_hong` i `plus_lgbm`: te same miary i testy, opisowo.
-4. **Warianty C0 z 72 i 168 godzinami:** czy słabość C0 wynika z idei wartości dopasowanych, czy z krótkiego okna.
-5. **Wrażliwość na błąd prognozy temperatury:** krzywa MAE doby D+1 na siatce poziomów i próg opłacalności, czyli poziom błędu, przy którym model z temperaturą zrównuje się z najlepszym modelem bez temperatury. Punkt odniesienia „prognoza z około 2002 roku” wyznaczamy z raportów weryfikacji ECMWF (Tech. Memo 414 i 432) przed oceną wyników.
-6. **Korekta ARIMA:** model dwustopniowy a jego pierwszy stopień (DM). Pierwsze stopnie (regresja, SVR, sieć, wygładzanie) zestawiamy też z LightGBM: wszystkie bez korekty ARIMA, strojone jako samodzielne modele (sekcja 2), na tych samych dobach. Rozdziela to przewagę wynikającą z modelu od przewagi z korekty ARIMA; LightGBM nie dostaje korekty ARIMA, bo jego reszty w oknie uczącym są prawie zerowe (dopasowanie drzew) i nie odpowiadają błędom prognozy.
-7. **Przekroje:** doba D (godziny 1-24); RMSE i MASE; typy dni (robocze, soboty, niedziele, święta, dni pomostowe); miesiące; godziny horyzontu; bez godzin oznaczonych jako podejrzane.
-8. **Stabilność wag:** zmienność z doby na dobę, odsetek wag ujemnych, częstość zmiany modelu w C6.
-9. **Koszt obliczeń:** czas dopasowania i prognozy modeli.
-10. **Replikacja na GEFCom2012:** ten sam plan, porównanie kierunków wyników H1-H4 z ElecEner.
-11. **Kontrola metody estymacji SARIMA:** przebieg kontrolny z dokładną wiarygodnością na podzbiorze dób.
+Tekst główny:
+1. **Pojedyncze okno 48 h:** odsetek dób, w których łączenie miałoby mniejsze MAE z 48 h niż najlepszy model bazowy wybrany po fakcie (układ oceny pierwszej wersji).
+2. **Rozkład MAE średniej:** dla każdej godziny średnie |e| modeli - |błąd średniej| = 2 min(P, N), gdzie P i N to średnie dodatnich i ujemnych części błędów; uśrednione po godzinach doby D+1, także według godziny doby; porównanie z różnicą między średnim MAE modeli a MAE każdego modelu pojedynczego.
+3. **Profil błędu w funkcji K** dla C1, C2, C5-C8 wobec C3.
+
+Analizy dodatkowe:
+
+4. **Pozostałe sposoby łączenia:** C2, C4, C5, C6 (wybór zamiast łączenia), C7 i C8 (kalibrowana średnia: czy zysk C1 wynika z kalibracji średniej, czy z różnicowania wag), K = 14 i 28.
+5. **Wartości dopasowane kontra prognozy przy tej samej liczbie obserwacji:** C0_H72 kontra C1_K3 i C0_H168 kontra C1_K7, tylko na wydaniach z pełną historią K dób (para 48 h / K = 2 jest w H2).
+6. **Pule rozszerzone** `plus_hong` i `plus_lgbm`.
+7. **Korekta ARIMA:** model dwustopniowy kontra jego pierwszy stopień; pierwsze stopnie (MR, ES, SVR, NN) kontra LGBM, wszystkie bez korekty ARIMA.
+8. **ARIMA_S24:** okres sezonowy 24 h kontra 168 h (R1).
+9. **Wrażliwość na błąd prognozy temperatury:** krzywa MAE doby D+1 na siatce i próg opłacalności wobec najlepszego modelu bez temperatury (modele bez temperatury wyznaczone z ich wejść; odniesienie wybrane opisowo na teście; liczba przecięć i niepewność raportowane). Raporty weryfikacji ECMWF (Tech. Memo 414 i 432) wyłącznie jako kontekst.
+10. **Przekroje:** doba D; RMSE (w scenariuszu losowym: pierwiastek ze średniej MSE po godzinach i losowaniach) i MASE; typy dni z liczebnościami (święta, dni pomostowe); miesiące; godziny horyzontu; bez godzin oznaczonych jako podejrzane.
+11. **Koszt obliczeń:** osobno dopasowanie, jedna prognoza 48 h (poranne uruchomienie operacyjne) i pętla po scenariuszach (koszt badania), z procesorem i liczbą wątków.
+12. **Replikacja na GEFCom2012:** ten sam plan; porównujemy kierunki wyników H1-H3 z ElecEner. Przy GEFCom błąd temperatury stały w dobie bada błąd poziomu przy znanym profilu godzinowym.
+13. **Kontrola estymacji SARIMA:** dokładna wiarygodność zamiast CSS dla wszystkich członów ARIMA na ciągłym fragmencie: wydania 1-31.10.2002 z rozgrzewką od 22.09.2002 (historia wag dla K ≤ 7); porównanie rankingu wariantów z rodzin hipotez. Kody zbieżności raportowane osobno od awarii.
+14. **Rekonstrukcja wyniku pierwszej wersji (plik Short):** odtworzenie tabeli 1 i wyników MAPE z podziałem na doby D i D+1; na kilku dobach, które Short pozwala ocenić, C1 i C3 wyłącznie jako ilustracja, bez testów.
+
+Suplement:
+
+15. Rozkład błędu kwadratowego średniej (Krogh i Vedelsby 1995) i korelacje błędów pul.
+16. Stabilność wag (zmienność z doby na dobę, odsetek wag ujemnych, częstość zmiany modelu w C6) oraz usunięcie jednej doby z historii wag C1 (K = 2 i 7): suma modułów zmian wag i średnia godzinowa zmiana prognozy D+1; mediana i 90. percentyl po wydaniach.
+17. Koszt asymetryczny: niedoszacowanie U i przeszacowanie O (MAE = U + O), strata r U + O dla r ∈ {0,5; 1; 2; 4} i stosunek r*, przy którym warianty zamieniają kolejność; bez przeliczania na pieniądze.
+
+Przebiegi dodatkowe (po przebiegu głównym, jeśli starczy czasu obliczeń):
+
+18. **Kwartalna ponowna identyfikacja** przed 1.11.2002, 1.02.2003 i 1.05.2003, każda na poprzedzających 5 miesiącach (sierpień-październik na parametrach z identyfikacji głównej, bo identyfikacja przed 1.08.2002 obejmowałaby kwiecień 2002); porównanie z przebiegiem głównym (R3: adaptacja).
+19. **Okno uczące 56 dób**, te same parametry z identyfikacji (zamrożone; ablacja lekko faworyzuje okno 84); tylko temperatura zmierzona i persystencja.
+
+Odłożone (archiwum wystarcza, liczymy na prośbę recenzenta): rozkład różnicy oracle-persystencja na wkład bieżącej prognozy i historii wag.
 
 ## 5. Zasady stałe
 
-- **Bez wyborów na teście:** żaden wybór (K, warianty modeli, rzędy ARIMA, hiperparametry, data startu testu) nie jest dokonywany na podstawie wyników okresu testowego.
-- **Awaria modelu w dobie:** brak prognozy łączonej w tej dobie. Wagi w kolejnych dobach liczone na dostępnej historii, jeśli brakuje najwyżej jednej doby na tydzień. Liczba awarii raportowana.
-- **Porównania:** wyłącznie na wspólnych parach (doba wydania, blok).
-- **Scenariusz losowy:** miary uśrednione po losowaniach; testy na dziennych stratach uśrednionych po losowaniach.
-- **Powtarzalność:** ziarna stałe, migawka wejść w katalogu przebiegu, ślad każdego wywołania w `runs/`.
+- **Bez wyborów na teście:** żaden wybór (K, warianty modeli, rzędy ARIMA, hiperparametry, data startu testu) nie zależy od wyników okresu testowego.
+- **Awaria modelu w dobie:** brak prognozy łączonej w tej dobie; wagi w kolejnych dobach na dostępnej historii, jeśli brakuje najwyżej jednej doby na tydzień; liczba awarii raportowana.
+- **Parametry:** przebieg odmawia pracy na parametrach wstępnych (bez kompletnej identyfikacji) i na wyniku identyfikacji z innych danych; identyfikacja musi kończyć się przed pierwszą prognozą.
+- **Powtarzalność:** ziarna stałe, migawka wejść w katalogu przebiegu, ślad każdego wywołania w `runs/`, wersja kodu w wyniku identyfikacji.
 
-## 6. Do rozstrzygnięcia przed oceną (nie przed obliczeniami)
+## 6. Kolejność obliczeń i dostęp do wyników
+
+1. **Przebieg próbny na rozgrzewce** (test próbny 10-31.07.2002, poza okresem testu): tu oglądamy wszystkie tabele i wykresy, czasy i pamięć.
+2. **Zamrożenie planu:** etykieta w repozytorium.
+3. **Test kwartałami:** sierpień-październik, listopad-styczeń, luty-kwiecień, maj-czerwiec. Między kwartałami wyłącznie kontrola techniczna (`prognozowanie status`: kompletność, awarie, zbieżność, czasy, rozmiar archiwum), bez miar dokładności.
+4. **Ocena dokładności** raz, po ostatnim kwartale, zgodnie z tym planem.
+5. **Błąd w kodzie wykryty w trakcie:** poprawka, przeliczenie dotkniętych modeli od początku testu i wpis w sekcji 8.
+
+## 7. Ujawnienie wcześniejszego wglądu w doby testowe
+
+Przed zamrożeniem planu część dób testowych była oglądana:
+- kontrola wygładzania wykładniczego na 15 losowo wybranych dobach testu (daty nie zostały zapisane); wpłynęła na decyzję o wyborze wariantu wygładzania w identyfikacji (decyzja 12);
+- porównanie CSS z dokładną wiarygodnością na 20 dobach: 2002-08-20, 08-21, 08-25, 09-17, 10-09, 10-28, 10-29, 11-08, 11-19, 12-03, 2003-01-03, 01-16, 02-15, 03-10, 04-13, 04-26, 05-05, 05-21, 06-06, 06-09 (decyzja 9);
+- przebiegi techniczne kodu na parametrach wstępnych, które objęły doby wydania 1-6.08.2002 (także przebieg audytora 26.07-4.08.2002).
+
+Analiza wrażliwości: kontrasty H1-H3 bez dób 1-6.08.2002 i bez 20 dób porównania CSS z dokładną wiarygodnością. Dób kontroli wygładzania nie da się wykluczyć, bo ich daty nie zostały zapisane.
+
+## 8. Do rozstrzygnięcia przed oceną (nie przed obliczeniami)
 
 - **Data startu testu** (sekcja 2), zależnie od odpowiedzi w sprawie kwietnia 2002.
-- **Pasek „prognoza z około 2002 roku”** na siatce błędu temperatury (sekcja 4, punkt 5).
+- **Pasek „prognoza z około 2002 roku”** na siatce błędu temperatury (sekcja 4, punkt 9).
 
-## 7. Odstępstwa od planu
+## 9. Odstępstwa od planu
 
 (puste)

@@ -28,12 +28,15 @@ STAGE1 = "__stage1"
 _K = re.compile(r"^(?:(?P<pool>[^/]+)/)?(?P<method>C[0-9])_K(?P<k>\d+)$")
 
 
-def holm(p: pd.Series) -> pd.Series:
-    """Poprawka Holma-Bonferroniego dla rodziny porównań (wartości p w dowolnej kolejności)."""
+def holm(p: pd.Series, m: int | None = None) -> pd.Series:
+    """Poprawka Holma-Bonferroniego dla rodziny porównań.
+
+    m: planowana liczebność rodziny. Brakujące wartości p (kontrast nieoceniony) liczą się
+    jak p = 1, czyli rodzina nie kurczy się po cichu, gdy któregoś wariantu brakuje."""
     p = p.astype(float)
     ok = p.dropna().sort_values()
-    m = len(ok)
-    adj = np.maximum.accumulate(np.minimum(1.0, (m - np.arange(m)) * ok.to_numpy()))
+    m = max(m or 0, len(ok))
+    adj = np.maximum.accumulate(np.minimum(1.0, (m - np.arange(len(ok))) * ok.to_numpy()))
     return pd.Series(adj, index=ok.index).reindex(p.index)
 
 
@@ -193,15 +196,18 @@ def compute_cost(run_dir: Path) -> pd.DataFrame:
     return out.sort_values("operational_median")
 
 
-def break_even(sens: pd.DataFrame) -> pd.DataFrame:
-    """Dla każdego modelu korzystającego z temperatury: poziom błędu prognozy temperatury
+def break_even(sens: pd.DataFrame, no_temperature: list[str]) -> pd.DataFrame:
+    """Dla każdego wariantu korzystającego z temperatury: poziom błędu prognozy temperatury
     (sd dla D+1), przy którym jego MAE doby D+1 zrównuje się z najlepszym modelem bez
     temperatury (interpolacja liniowa między poziomami siatki).
 
-    Model "bez temperatury" rozpoznajemy po wyniku: MAE stałe na całej siatce."""
+    no_temperature: modele, które z definicji nie korzystają z temperatury (z wejść modeli).
+    Odniesienie (najlepszy z nich) jest wybrane opisowo na teście, co raport zaznacza.
+    Raportujemy liczbę przecięć; przy kilku przecięciach albo różnicy bliskiej zeru wynik
+    jest oznaczony jako niepewny."""
     curve = sens.dropna(subset=["sd_day2"]).pivot(index="sd_day2", columns="model", values="MAE")
     curve = curve.sort_index()
-    flat = [m for m in curve.columns if np.ptp(curve[m].to_numpy()) < 1e-9]
+    flat = [m for m in no_temperature if m in curve.columns]
     if not flat:
         return pd.DataFrame()
     ref_model = curve[flat].iloc[0].idxmin()
@@ -209,71 +215,240 @@ def break_even(sens: pd.DataFrame) -> pd.DataFrame:
     rows = []
     x = curve.index.to_numpy(dtype=float)
     for m in curve.columns:
-        if m in flat:
+        if m in flat or m in no_temperature:
             continue
         y = curve[m].to_numpy() - ref
+        sign = np.sign(y)
+        crossings = np.where(np.diff(sign) != 0)[0]
         if y[0] >= 0:
             be, note = 0.0, "gorszy już przy temperaturze zmierzonej"
-        elif np.all(y < 0):
+        elif not len(crossings):
             be, note = np.nan, f"lepszy na całej siatce (do {x[-1]:g})"
         else:
-            i = int(np.argmax(y >= 0))
+            i = int(crossings[0]) + 1
             be = float(x[i - 1] + (x[i] - x[i - 1]) * (-y[i - 1]) / (y[i] - y[i - 1]))
-            note = ""
+            note = "kilka przecięć: niepewny" if len(crossings) > 1 else ""
+        if np.nanmin(np.abs(y)) < 0.01 * ref and not note:
+            note = "różnica bliska zeru: niepewny"
         rows.append(
             {
                 "model": m,
                 "MAE_oracle": float(curve[m].iloc[0]),
                 "reference": ref_model,
+                "reference_choice": "opisowo na teście",
                 "MAE_reference": ref,
                 "break_even_sd_day2": be,
+                "n_crossings": len(crossings),
                 "note": note,
             }
         )
     return pd.DataFrame(rows).sort_values("MAE_oracle")
 
 
-def primary_families(
-    base_models: list[str], benchmarks: list[str], k_days: list[int], methods: list[str]
-) -> dict[str, list[str]]:
-    """Rodziny hipotez głównych (plan analizy, sekcja 3); każde porównanie: model vs C3."""
-    fam = {
-        "H1 wagi estymowane vs C3": [
-            f"{m}_K{k}" for m in ("C1", "C2", "C5") if m in methods for k in k_days
-        ],
-        "H2 procedura pierwotna C0 vs C3": ["C0"] if "C0" in methods else [],
-        "H3 modele pojedyncze vs C3": [*base_models, *benchmarks],
-        "H4 wybór C6 vs C3": [f"C6_K{k}" for k in k_days] if "C6" in methods else [],
-    }
-    return {k: v for k, v in fam.items() if v}
+def family_models(families) -> list[str]:
+    """Wszystkie warianty występujące w rodzinach hipotez (porównywane i odniesienia)."""
+    out: list[str] = []
+    for f in families.values():
+        out += [f.reference, *f.compare]
+    return list(dict.fromkeys(out))
 
 
-def primary_tests(losses: pd.DataFrame, families: dict[str, list[str]]) -> pd.DataFrame:
-    """Testy DM wobec C3 w rodzinach hipotez głównych, poprawka Holma w obrębie rodziny.
-    Ujemna średnia różnica: model lepszy od C3."""
+def primary_tests(losses: pd.DataFrame, families) -> pd.DataFrame:
+    """Testy DM w rodzinach hipotez głównych (konfiguracja evaluation.families), poprawka
+    Holma w obrębie rodziny z planowaną liczebnością. Kontrast bez danych zostaje w tabeli
+    jako nieoceniony. Kolumny kontrolne: h = 2 w poprawce HLN, pasmo 14 dób, HAC bez HLN.
+    Ujemna średnia różnica: wariant porównywany lepszy od odniesienia."""
     rows = []
-    for fam, models in families.items():
+    for fam, spec in families.items():
         part = []
-        for m in models:
-            if m not in losses.columns or "C3" not in losses.columns:
+        for m in spec.compare:
+            base = {"family": fam, "reference": spec.reference, "model": m}
+            if m not in losses.columns or spec.reference not in losses.columns:
+                part.append({**base, "status": "nieoceniony", "p_value": np.nan})
                 continue
-            ok = losses[[m, "C3"]].dropna()
+            ok = losses[[m, spec.reference]].dropna()
+            dates = pd.DatetimeIndex(ok.index)
+            a, b = ok[m].to_numpy(), ok[spec.reference].to_numpy()
+            main = mt.diebold_mariano(a, b, dates=dates)
             part.append(
                 {
-                    "family": fam,
-                    "model": m,
-                    **mt.diebold_mariano(ok[m].to_numpy(), ok["C3"].to_numpy()),
+                    **base,
+                    "status": "oceniony",
+                    **main,
+                    "p_h2": mt.diebold_mariano(a, b, dates=dates, h=2)["p_value"],
+                    "p_bw14": mt.diebold_mariano(a, b, dates=dates, max_lag=14)["p_value"],
+                    "p_no_hln": mt.diebold_mariano(a, b, dates=dates, hln=False)["p_value"],
                 }
             )
-        if part:
-            df = pd.DataFrame(part)
-            df["p_holm"] = holm(df["p_value"]).to_numpy()
-            rows.append(df)
+        df = pd.DataFrame(part)
+        df["p_holm"] = holm(df["p_value"], m=len(spec.compare)).to_numpy()
+        rows.append(df)
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
-def primary_set(base_models: list[str], benchmarks: list[str], models: list[str]) -> list[str]:
-    """Zbiór do MCS w analizie głównej: modele pojedyncze i warianty łączenia puli głównej
-    (bez pierwszych stopni i pul rozszerzonych)."""
-    combos = [m for m in models if m.startswith("C") and "/" not in m and STAGE1 not in m]
-    return [m for m in [*base_models, *benchmarks, *combos] if m in models]
+def confirm_across_scenarios(
+    tables: dict[str, pd.DataFrame], families, alpha: float
+) -> pd.DataFrame:
+    """Reguła potwierdzenia (plan analizy): dla każdego kontrastu większa z wartości p
+    w scenariuszach, poprawka Holma w rodzinie (planowana liczebność) i zgodny kierunek."""
+    scen = list(tables)
+    keys = ["family", "reference", "model"]
+    merged = None
+    for s_name, t in tables.items():
+        part = t[[*keys, "mean_diff", "p_value"]].rename(
+            columns={"mean_diff": f"mean_diff_{s_name}", "p_value": f"p_{s_name}"}
+        )
+        merged = part if merged is None else merged.merge(part, on=keys, how="outer")
+    if merged is None:
+        return pd.DataFrame()
+    pcols = [f"p_{s}" for s in scen]
+    merged["p_max"] = merged[pcols].max(axis=1, skipna=False)
+    signs = np.sign(merged[[f"mean_diff_{s}" for s in scen]])
+    merged["same_direction"] = signs.nunique(axis=1).eq(1) & signs.notna().all(axis=1)
+    merged["p_max_holm"] = np.nan
+    for fam, spec in families.items():
+        sel = merged["family"] == fam
+        merged.loc[sel, "p_max_holm"] = holm(merged.loc[sel, "p_max"], m=len(spec.compare))
+    merged["confirmed"] = merged["same_direction"] & (merged["p_max_holm"] < alpha)
+    return merged
+
+
+def coverage(
+    frame: pd.DataFrame,
+    planned: list[str],
+    n_test_days: int,
+    main_models: set[str],
+    main_days: int,
+    all_days: int,
+) -> pd.DataFrame:
+    """Planowane warianty (uwaga audytora): doby testu, doby dostępne (z prognozą D+1)
+    i doby użyte w analizie głównej oraz w zestawieniu wszystkich wariantów."""
+    d2 = frame[frame["block"] == DAY2]
+    avail = d2.groupby("model")["origin"].nunique()
+    rows = []
+    for m in planned:
+        n_av = int(avail.get(m, 0))
+        rows.append(
+            {
+                "variant": m,
+                "planned_days": n_test_days,
+                "available_days": n_av,
+                "main_analysis": m in main_models,
+                "used_main_days": main_days if m in main_models and n_av else 0,
+                "used_all_days": all_days if n_av else 0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def mae_cancellation(frame: pd.DataFrame, models: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Rozkład MAE średniej w mierze głównej (uzupełnienie audytu): dla każdej godziny
+    średnia po modelach |e| - |błąd średniej| = 2 min(P, N), gdzie P i N to średnie po
+    modelach z dodatnich i ujemnych części błędów. Uśrednione po godzinach doby D+1.
+
+    Zwraca (podsumowanie z porównaniem z każdym modelem, przebieg według godziny doby)."""
+    d2 = frame[(frame["block"] == DAY2) & frame["model"].isin(models)]
+    E = d2.pivot_table(index=["origin", "target", "draw"], columns="model", values="error").dropna()
+    if E.shape[1] != len(models) or E.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    e = E[models].to_numpy()
+    P = np.clip(e, 0, None).mean(axis=1)
+    N = np.clip(-e, 0, None).mean(axis=1)
+    canc = 2 * np.minimum(P, N)
+    avg_mae = float((P + N).mean())
+    mae_mean = float(np.abs(P - N).mean())
+    rows = []
+    for j, m in enumerate(models):
+        mae_j = float(np.abs(e[:, j]).mean())
+        rows.append(
+            {
+                "model": m,
+                "MAE_model": mae_j,
+                "MAE_mean_of_models": avg_mae,
+                "MAE_C3": mae_mean,
+                "cancellation": float(canc.mean()),
+                "needed_to_beat": avg_mae - mae_j,
+                "C3_beats_model": mae_mean < mae_j,
+            }
+        )
+    hours = E.index.get_level_values("target").hour + 1
+    by_hour = (
+        pd.DataFrame({"hour": hours, "cancellation": canc, "mixed_signs": (P > 0) & (N > 0)})
+        .groupby("hour")
+        .mean()
+    )
+    for j, m in enumerate(models):
+        by_hour[f"needed_vs_{m}"] = (
+            pd.Series(P + N - np.abs(e[:, j]), index=hours).groupby(level=0).mean()
+        )
+    summary = pd.DataFrame(rows)
+    summary.attrs["share_mixed_signs"] = float(((P > 0) & (N > 0)).mean())
+    return summary, by_hour
+
+
+def asymmetric_loss(frame: pd.DataFrame, reference: str) -> pd.DataFrame:
+    """Niedoszacowanie U i przeszacowanie O (dodatnie części błędów, doba D+1); MAE = U + O.
+    Strata przy stosunku kosztów r (niedoszacowanie do przeszacowania): r U + O. Dwa warianty
+    zamieniają kolejność przy r* = -dO/dU (wobec odniesienia). Analiza wrażliwości przy
+    liniowej funkcji strat, bez przeliczania na pieniądze."""
+    d2 = frame[frame["block"] == DAY2]
+    g = d2.assign(U=np.clip(-d2["error"], 0, None), O=np.clip(d2["error"], 0, None))
+    t = g.groupby("model")[["U", "O"]].mean()
+    t["MAE"] = t["U"] + t["O"]
+    if reference in t.index:
+        dU = t["U"] - t.loc[reference, "U"]
+        dO = t["O"] - t.loc[reference, "O"]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r = -dO / dU
+        t["r_star_vs_ref"] = r.where((dU != 0) & (r > 0))
+        for ratio in (0.5, 1.0, 2.0, 4.0):
+            t[f"loss_r{ratio:g}"] = ratio * t["U"] + t["O"]
+    return t.sort_values("MAE")
+
+
+def fitted_vs_forecast_pairs(
+    losses: pd.DataFrame, weights: pd.DataFrame | None, seed: int
+) -> pd.DataFrame:
+    """C0 z n godzinami dopasowań kontra C1 z K = n/24 dobami prognoz: ta sama liczba
+    realizacji w regresji (uzupełnienie audytu). Tylko doby, w których C1 miał pełną
+    historię K dób. Para 48 h / K = 2 jest główna (H2), pozostałe kontrolne."""
+    from prognozowanie.evaluate.inference import bootstrap_ci
+
+    pairs = [("C0", "C1_K2", 2), ("C0_H72", "C1_K3", 3), ("C0_H168", "C1_K7", 7)]
+    rows = []
+    for c0, c1, k in pairs:
+        if c0 not in losses.columns or c1 not in losses.columns:
+            continue
+        ok = losses[[c0, c1]].dropna()
+        if weights is not None and not weights.empty:
+            full = weights[
+                (weights["method"] == "C1")
+                & (weights["k"] == k)
+                & (weights["block"] == 2)
+                & (weights["n_history_days"] == k)
+            ]["origin"].unique()
+            ok = ok[ok.index.isin(full)]
+        if len(ok) < 10:
+            continue
+        dm = mt.diebold_mariano(
+            ok[c0].to_numpy(), ok[c1].to_numpy(), dates=pd.DatetimeIndex(ok.index)
+        )
+        ci = bootstrap_ci(ok, reference=c1, n_boot=2000, seed=seed)
+        rows.append(
+            {
+                "fitted_variant": c0,
+                "forecast_variant": c1,
+                "days": len(ok),
+                "mean_diff": float((ok[c0] - ok[c1]).mean()),
+                "ci_low": float(ci.loc[c0, "diff_ci_low"]),
+                "ci_high": float(ci.loc[c0, "diff_ci_high"]),
+                "p_value": dm["p_value"],
+                "role": "H2 (główna)" if k == 2 else "kontrola",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def primary_set(families, models: list[str]) -> list[str]:
+    """Zbiór analizy głównej (MCS, bootstrap): warianty z rodzin hipotez."""
+    return [m for m in family_models(families) if m in models]

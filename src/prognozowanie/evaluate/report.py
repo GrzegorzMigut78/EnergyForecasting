@@ -63,112 +63,180 @@ def weight_stability(weights: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _no_temperature_models(cfg: ExperimentConfig) -> list[str]:
+    """Modele, które z definicji nie korzystają z temperatury (wejścia modelu)."""
+    from prognozowanie.models import build_model
+
+    out = []
+    for m in cfg.models:
+        try:
+            if not build_model(m.model_dump(), seed=0).uses_temperature:
+                out.append(m.name)
+        except Exception:  # model niebudowalny bez danych: pomijamy w liście
+            pass
+    return out
+
+
+def _common(frame: pd.DataFrame, models: list[str] | None = None):
+    """Wspólne pary (doba wydania, blok) dla podanych modeli (None = wszystkie obecne)."""
+    if models is not None:
+        frame = frame[frame["model"].isin(models)]
+    keys = pd.MultiIndex.from_frame(frame[["origin", "block"]])
+    frame = frame.assign(_key=list(keys))
+    per_model = frame.groupby("model")["_key"].unique().map(set)
+    common = set.intersection(*per_model.to_list()) if len(per_model) else set()
+    out = frame[frame["_key"].isin(common)].drop(columns="_key")
+    return out, common, per_model
+
+
 def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle") -> Path:
     from prognozowanie.backtest import load_archive
+    from prognozowanie.combine.runner import (
+        leave_one_day_out,
+        load_combined,
+        method_variants,
+    )
 
     actuals = pd.read_parquet(run_dir / "actuals.parquet")
     # tylko modele z bieżącej konfiguracji (archiwum może zawierać modele usunięte z listy)
-    fc = load_archive(run_dir, models=[m.name for m in cfg.models])
-    fc = fc[fc["kind"] == "forecast"]
-    comb_path = run_dir / "combined.parquet"
-    if comb_path.exists():
-        fc = pd.concat([fc, pd.read_parquet(comb_path)], ignore_index=True)
-
+    archive = load_archive(run_dir, models=[m.name for m in cfg.models])
     test = pd.date_range(cfg.periods.test.start, cfg.periods.test.end, freq="D")
-    fc = fc[fc["origin"].isin(test)]
+    arch_fc = archive[(archive["kind"] == "forecast") & archive["origin"].isin(test)]
     scale = mt.mase_scale(actuals["load"], test, cfg.forecast.training_window_days)
-    df = mt.attach_actuals(fc, actuals).merge(scale, left_on="origin", right_index=True)
+
+    def scenario_frame(scen: str) -> pd.DataFrame:
+        parts = [arch_fc[arch_fc["scenario"] == scen]]
+        comb = load_combined(run_dir, [scen])
+        legacy = run_dir / "combined.parquet"  # stary układ: jeden plik łączenia
+        if comb.empty and legacy.exists():
+            comb = pd.read_parquet(legacy)
+            comb = comb[comb["scenario"] == scen]
+        if not comb.empty:
+            parts.append(comb[comb["origin"].isin(test)])
+        fc = pd.concat(parts, ignore_index=True)
+        return mt.attach_actuals(fc, actuals).merge(scale, left_on="origin", right_index=True)
 
     out_dir = run_dir / "report"
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)
+    fams = cfg.evaluation.families
+    ref = cfg.evaluation.reference
 
     # w scenariuszu losowym miary są uśrednione po wszystkich losowaniach
-    scen_df = df[df["scenario"] == scenario]
-    # wspólne pary (doba wydania, blok): każdy blok porównywany na tym samym zbiorze dób
-    keys = pd.MultiIndex.from_frame(scen_df[["origin", "block"]])
-    scen_df = scen_df.assign(_key=list(keys))
-    per_model = scen_df.groupby("model")["_key"].unique().map(set)
-    common = set.intersection(*per_model.to_list()) if len(per_model) else set()
+    scen_raw = scenario_frame(scenario)
+    present = sorted(scen_raw["model"].unique())
+    # analiza główna: warianty z rodzin hipotez, na ich własnych wspólnych dobach, żeby brak
+    # wariantu dodatkowego (np. pula rozszerzona) nie wycinał dób z analizy głównej
+    main_models = an.primary_set(fams, present) if fams else present
+    scen_main, common_main, _ = _common(scen_raw, main_models)
+    scen_df, common, per_model = _common(scen_raw)  # wszystkie warianty (opisowo)
     longest = max(map(len, per_model)) if len(per_model) else 0
     short = {m: len(o) // 2 for m, o in per_model.items() if len(o) < longest}
-    scen_df = scen_df[scen_df["_key"].isin(common)].drop(columns="_key")
-    common_days = {b: sum(1 for _, bb in common if bb == b) for b in (BLOCK1, DAY2)}
-    d2 = scen_df[scen_df["block"] == DAY2]
+    common_days = {b: sum(1 for _, bb in common_main if bb == b) for b in (BLOCK1, DAY2)}
+    all_days = {b: sum(1 for _, bb in common if bb == b) for b in (BLOCK1, DAY2)}
+    d2 = scen_main[scen_main["block"] == DAY2]
 
     fails = failures(run_dir)
     fails.to_csv(out_dir / "failures.csv", index=False)
 
-    main = mt.summary(scen_df, ["block", "model"]).reset_index()
-    main.to_csv(out_dir / f"summary_{scenario}.csv", index=False)
-    mt.summary(scen_df, ["block", "day_type", "model"]).reset_index().to_csv(
+    planned = [m.name for m in cfg.models]
+    for pool, _models in cfg.combination.pools().items():
+        prefix = f"{pool}/" if pool else ""
+        planned += [prefix + label for *_, label in method_variants(cfg)]
+    cov = an.coverage(
+        scen_raw, planned, len(test), set(main_models), common_days[DAY2], all_days[DAY2]
+    )
+    cov.to_csv(out_dir / f"coverage_{scenario}.csv", index=False)
+
+    main = mt.summary(scen_main, ["block", "model"]).reset_index()
+    main.to_csv(out_dir / f"summary_main_{scenario}.csv", index=False)
+    summary_all = mt.summary(scen_df, ["block", "model"]).reset_index()
+    summary_all.to_csv(out_dir / f"summary_{scenario}.csv", index=False)
+    mt.summary(scen_main, ["block", "day_type", "model"]).reset_index().to_csv(
         out_dir / f"by_day_type_{scenario}.csv", index=False
     )
+    day_counts = scen_main[scen_main["block"] == DAY2].groupby("day_type")["origin"].nunique()
+    day_counts.rename("issue_days").to_csv(out_dir / f"day_type_counts_{scenario}.csv")
     mt.summary(
         d2.assign(month=d2["target"].dt.to_period("M").astype(str)), ["month", "model"]
     ).reset_index().to_csv(out_dir / f"by_month_{scenario}.csv", index=False)
-    mt.summary(scen_df, ["horizon", "model"]).reset_index().to_csv(
+    mt.summary(scen_main, ["horizon", "model"]).reset_index().to_csv(
         out_dir / f"by_horizon_{scenario}.csv", index=False
     )
-    common_d2 = {o for o, b in common if b == DAY2}
-    mt.summary(
-        df[(df["block"] == DAY2) & df["origin"].isin(common_d2)], ["scenario", "model"]
-    ).reset_index().to_csv(out_dir / "by_scenario_day2.csv", index=False)
-    # wrażliwość na błąd prognozy temperatury: MAE doby D+1 wg poziomu błędu (0 = oracle);
-    # persystencja jako punkt kontrolny w tej samej tabeli (bez wartości na osi)
+    common_d2 = {o for o, b in common_main if b == DAY2}
+    # wszystkie scenariusze temperatury na dobach analizy głównej, scenariusz po scenariuszu
+    # (pełne łączenie wszystkich scenariuszy nie mieści się w pamięci naraz)
+    per_scen = []
+    for s_name in [t.name for t in cfg.temperature_scenarios]:
+        fr = scen_raw if s_name == scenario else scenario_frame(s_name)
+        fr = fr[(fr["block"] == DAY2) & fr["origin"].isin(common_d2) & fr["model"].isin(present)]
+        if not fr.empty:
+            per_scen.append(mt.summary(fr, ["scenario", "model"]).reset_index())
+    by_scen = pd.concat(per_scen, ignore_index=True) if per_scen else pd.DataFrame()
+    by_scen.to_csv(out_dir / "by_scenario_day2.csv", index=False)
+    # wrażliwość na błąd prognozy temperatury: MAE doby D+1 wg poziomu błędu (0 = oracle)
     noise_levels = {s.name: s.sd_day2 for s in cfg.temperature_scenarios if s.kind == "noisy"}
     sens = None
-    if noise_levels:
-        d2all = df[(df["block"] == DAY2) & df["origin"].isin(common_d2)]
-        sens = mt.summary(d2all, ["scenario", "model"]).reset_index()
+    if noise_levels and not by_scen.empty:
+        sens = by_scen.copy()
         level = {"oracle": 0.0, **noise_levels}
         sens["sd_day2"] = sens["scenario"].map(level)
         sens.to_csv(out_dir / "noise_sensitivity_day2.csv", index=False)
     # wrażliwość: ocena bez godzin oznaczonych jako podejrzane (flaga w konfiguracji zbioru)
-    clean = scen_df[scen_df["suspicious"] == 0]
+    clean = scen_main[scen_main["suspicious"] == 0]
     mt.summary(clean, ["block", "model"]).reset_index().to_csv(
         out_dir / f"summary_without_flagged_{scenario}.csv", index=False
     )
 
     # testy na dziennych stratach doby D+1 (średnia po losowaniach w scenariuszu losowym)
     losses = mt.daily_loss(d2)
-    ref = "C3" if "C3" in losses.columns else losses.columns[0]
-    dm = mt.dm_table(losses, ref)
-    # rodzina porównań z odniesieniem: poprawka Holma (plan analizy, sekcja 5)
-    dm["p_holm"] = an.holm(dm["p_value"])
-    dm.to_csv(out_dir / f"dm_vs_{ref}_{scenario}.csv")
-    benchmarks = [m.name for m in cfg.models if m.role == "benchmark"]
-    fams = an.primary_families(
-        cfg.combination.base_models, benchmarks, cfg.combination.k_days, cfg.combination.methods
-    )
-    prim = an.primary_tests(losses, fams)
+    losses_all = mt.daily_loss(scen_df[scen_df["block"] == DAY2])
+    dm_ref = ref if ref in losses_all.columns else losses_all.columns[0]
+    dm = mt.dm_table(losses_all, dm_ref)
+    dm["p_holm_all"] = an.holm(dm["p_value"])  # opisowo: cała tabela jako jedna rodzina
+    dm.to_csv(out_dir / f"dm_vs_{dm_ref}_{scenario}.csv")
+    prim = an.primary_tests(losses, fams) if fams else pd.DataFrame()
+    confirmed = pd.DataFrame()
     if not prim.empty:
         prim.to_csv(out_dir / f"primary_tests_{scenario}.csv", index=False)
-    # MCS i bootstrap w analizie głównej: modele pojedyncze i łączenia puli głównej
-    pset = an.primary_set(cfg.combination.base_models, benchmarks, list(losses.columns))
+        if cfg.evaluation.seen_days:  # plan, sekcja 7: bez dób oglądanych przed zamrożeniem
+            seen = pd.DatetimeIndex([pd.Timestamp(d) for d in cfg.evaluation.seen_days])
+            an.primary_tests(losses[~losses.index.isin(seen)], fams).to_csv(
+                out_dir / f"primary_tests_without_seen_days_{scenario}.csv", index=False
+            )
+        files = {s_: out_dir / f"primary_tests_{s_}.csv" for s_ in cfg.evaluation.confirm_scenarios}
+        if all(f.exists() for f in files.values()):
+            tables = {s_: pd.read_csv(f) for s_, f in files.items()}
+            confirmed = an.confirm_across_scenarios(tables, fams, cfg.evaluation.alpha)
+            confirmed.to_csv(out_dir / "primary_confirmed.csv", index=False)
+    # MCS i bootstrap w analizie głównej
+    pset = [m for m in main_models if m in losses.columns]
     plosses = losses[pset]
     enough = len(plosses.dropna()) >= 30
-    ci = inf.bootstrap_ci(plosses, reference=ref, seed=cfg.seed) if enough else None
+    boot_ref = ref if ref in pset else pset[0]
+    ci = inf.bootstrap_ci(plosses, reference=boot_ref, seed=cfg.seed) if enough else None
     mcs = inf.model_confidence_set(plosses, seed=cfg.seed) if enough else None
     if ci is not None:
         ci.to_csv(out_dir / f"bootstrap_ci_{scenario}.csv")
         mcs.to_csv(out_dir / f"mcs_{scenario}.csv")
 
-    weights_path = run_dir / "weights.parquet"
+    weights = load_combined(run_dir, [scenario], what="weights")
+    if weights.empty and (run_dir / "weights.parquet").exists():
+        weights = pd.read_parquet(run_dir / "weights.parquet")
+        weights = weights[weights["scenario"] == scenario]
     stab = None
-    if weights_path.exists():
-        weights = pd.read_parquet(weights_path)
+    if not weights.empty:
         weights = weights[weights["origin"].isin(test)]  # bez dób rozgrzewki
         stab = weight_stability(weights)
-        stab.to_csv(out_dir / "weight_stability.csv", index=False)
+        stab.to_csv(out_dir / f"weight_stability_{scenario}.csv", index=False)
         for method in ("C1", "C2"):
-            k = 7 if 7 in cfg.combination.k_days else cfg.combination.k_days[0]
+            k = 2 if 2 in cfg.combination.k_days else cfg.combination.k_days[0]
             fg.weights_over_time(
-                weights, method, k, out_dir / "figures" / f"weights_{method}_K{k}.png"
+                weights, method, k, out_dir / "figures" / f"weights_{method}_K{k}_{scenario}.png"
             )
 
     # analizy dodatkowe (plan analizy, sekcja 4)
     extra: dict[str, pd.DataFrame] = {}
-    kp = an.k_profile(main)
+    kp = an.k_profile(summary_all)
     if not kp.empty:
         kp.to_csv(out_dir / f"k_profile_{scenario}.csv", index=False)
         extra["k"] = kp
@@ -199,7 +267,7 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     if not div.empty:
         div.to_csv(out_dir / f"diversity_{scenario}.csv", index=False)
         extra["div"] = div
-    abl = an.arima_ablation(losses)
+    abl = an.arima_ablation(losses_all)
     if not abl.empty:
         abl.to_csv(out_dir / f"arima_ablation_{scenario}.csv", index=False)
         extra["abl"] = abl
@@ -207,18 +275,47 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     if not cost.empty:
         cost.to_csv(out_dir / "compute_cost.csv")
     if sens is not None:
-        be = an.break_even(sens)
+        be = an.break_even(sens, _no_temperature_models(cfg))
         if not be.empty:
             be.to_csv(out_dir / "break_even_temperature.csv", index=False)
             extra["be"] = be
 
+    canc, canc_hour = an.mae_cancellation(scen_df, cfg.combination.base_models)
+    if not canc.empty:
+        canc.to_csv(out_dir / f"mae_cancellation_{scenario}.csv", index=False)
+        canc_hour.to_csv(out_dir / f"mae_cancellation_by_hour_{scenario}.csv")
+        extra["canc"] = canc
+    h3_ref = fams["H3"].reference if "H3" in fams else ref
+    asym = an.asymmetric_loss(scen_main, h3_ref)
+    asym.to_csv(out_dir / f"asymmetric_loss_{scenario}.csv")
+    pairs = an.fitted_vs_forecast_pairs(losses_all, weights, cfg.seed)
+    if not pairs.empty:
+        pairs.to_csv(out_dir / f"fitted_vs_forecast_{scenario}.csv", index=False)
+        extra["pairs"] = pairs
+    if scenario in cfg.evaluation.confirm_scenarios:
+        part = archive[archive["scenario"] == scenario]
+        loo = pd.concat(
+            [
+                leave_one_day_out(part, actuals["load"], cfg.combination.base_models, test, k)
+                for k in (2, 7)
+                if k in cfg.combination.k_days
+            ],
+            ignore_index=True,
+        )
+        if not loo.empty:
+            loo.to_csv(out_dir / f"leave_one_day_out_{scenario}.csv", index=False)
+            extra["loo"] = loo.groupby("k")[
+                ["median_forecast_change", "max_forecast_change", "max_weight_change"]
+            ].quantile([0.5, 0.9])
+
     # wykresy: modele bazowe, model naiwny, średnia i najlepsze warianty łączenia
-    piv = main.pivot(index="model", columns="block", values="MAE")
+    piv = summary_all.pivot(index="model", columns="block", values="MAE")
     best_comb = [m for m in piv.sort_values(DAY2).index if m.startswith(("C", "plus"))][:2]
     show = [m for m in [*cfg.combination.base_models, "SNAIVE", "C3", *best_comb] if m in piv.index]
     show = list(dict.fromkeys(show))[:8]
+    d2_all = scen_df[scen_df["block"] == DAY2]
     fg.mae_by_horizon(scen_df, show, out_dir / "figures" / f"mae_by_horizon_{scenario}.png")
-    fg.mae_by_month(d2, show, out_dir / "figures" / f"mae_by_month_{scenario}.png")
+    fg.mae_by_month(d2_all, show, out_dir / "figures" / f"mae_by_month_{scenario}.png")
     if sens is not None:
         curve = sens.dropna(subset=["sd_day2"]).pivot(
             index="sd_day2", columns="model", values="MAE"
@@ -235,9 +332,11 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     # raport zbiorczy
     md = [f"# Raport: {cfg.name} ({run_dir.name}), scenariusz temperatury: {scenario}", ""]
     md += [
-        f"Doby testowe: {test.min():%Y-%m-%d} - {test.max():%Y-%m-%d}; doby wspólne dla "
-        f"wszystkich modeli (podstawa porównania): blok D {common_days[BLOCK1]}, "
-        f"blok D+1 {common_days[DAY2]}.",
+        f"Doby testowe: {test.min():%Y-%m-%d} - {test.max():%Y-%m-%d} ({len(test)}). "
+        f"Analiza główna (warianty z rodzin hipotez) na dobach wspólnych dla tych wariantów: "
+        f"blok D {common_days[BLOCK1]}, blok D+1 {common_days[DAY2]}. Zestawienie wszystkich "
+        f"wariantów (opisowo): blok D {all_days[BLOCK1]}, blok D+1 {all_days[DAY2]}. "
+        f"Pokrycie każdego planowanego wariantu: coverage_{scenario}.csv.",
         "",
     ]
     if short:
@@ -249,23 +348,38 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
             fails.groupby("model").size().rename("doby").to_frame().to_markdown(),
             "",
         ]
-    tab = main.pivot(index="model", columns="block", values=["MAE", "RMSE", "MASE"])
+    tab = summary_all.pivot(index="model", columns="block", values=["MAE", "RMSE", "MASE"])
     tab.columns = [f"{a} {b}" for a, b in tab.columns]
     md += [
-        "## Miary błędu wg bloku horyzontu",
+        "## Miary błędu wg bloku horyzontu (wszystkie warianty, opisowo)",
+        "",
+        "RMSE w scenariuszu losowym: pierwiastek ze średniej MSE po godzinach i losowaniach "
+        "(nie średnia z RMSE poszczególnych losowań).",
         "",
         tab.sort_values(f"MAE {DAY2}").round(3).to_markdown(),
         "",
     ]
     if not prim.empty:
         md += [
-            "## Hipotezy główne (plan analizy): DM wobec C3, doba D+1, Holm w rodzinie",
+            "## Hipotezy główne (plan analizy): DM, doba D+1, Holm w rodzinie",
+            "",
+            "Różnica = wariant - odniesienie rodziny (ujemna: wariant lepszy). Kolumny "
+            "p_h2, p_bw14, p_no_hln: kontrole konwencji testu.",
             "",
             prim.round(4).to_markdown(index=False),
             "",
         ]
+    if not confirmed.empty:
+        md += [
+            "## Potwierdzenie w scenariuszach " + ", ".join(cfg.evaluation.confirm_scenarios),
+            "",
+            "Większa z wartości p, Holm w rodzinie, zgodny kierunek różnicy.",
+            "",
+            confirmed.round(4).to_markdown(index=False),
+            "",
+        ]
     md += [
-        f"## Test Diebolda-Mariano, doba D+1, wobec {ref} (wszystkie warianty, opisowo)",
+        f"## Test Diebolda-Mariano, doba D+1, wobec {dm_ref} (wszystkie warianty, opisowo)",
         "",
         "Ujemna średnia różnica: model lepszy od odniesienia.",
         "",
@@ -274,7 +388,7 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     ]
     if ci is not None:
         md += [
-            f"## Przedziały bootstrapowe 95% (bloki 7 dób), doba D+1, różnica wobec {ref}",
+            f"## Przedziały bootstrapowe 95% (bloki 7 dób), doba D+1, różnica wobec {boot_ref}",
             "",
             ci.sort_values("mean_loss").round(3).to_markdown(),
             "",
@@ -302,6 +416,29 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
             "wybrany po fakcie.",
             "",
             extra["sw"].round(3).to_markdown(index=False),
+            "",
+        ]
+    if "canc" in extra:
+        md += [
+            "## Rozkład MAE średniej: średnie MAE modeli - 2 min(P, N) (doba D+1)",
+            "",
+            f"Godziny z błędami obu znaków: {extra['canc'].attrs['share_mixed_signs']:.1%}.",
+            "",
+            extra["canc"].round(3).to_markdown(index=False),
+            "",
+        ]
+    if "pairs" in extra:
+        md += [
+            "## Wartości dopasowane kontra prognozy przy tej samej liczbie obserwacji",
+            "",
+            extra["pairs"].round(4).to_markdown(index=False),
+            "",
+        ]
+    if "loo" in extra:
+        md += [
+            "## Usunięcie jednej doby z historii wag C1 (mediana i 90. percentyl po wydaniach)",
+            "",
+            extra["loo"].round(3).to_markdown(),
             "",
         ]
     if "div" in extra:

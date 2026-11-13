@@ -176,7 +176,7 @@ class ModelSpec(_Strict):
 
 class CombinationConfig(_Strict):
     base_models: list[str]
-    methods: list[Literal["C0", "C1", "C2", "C3", "C4", "C5", "C6"]]
+    methods: list[Literal["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8"]]
     k_days: list[int] = Field(default_factory=lambda: [2, 3, 7, 14, 28])
     # godziny wartości dopasowanych dla wariantu C0; 48 = procedura artykułu ("C0"),
     # pozostałe wartości dają warianty "C0_H<godziny>", np. "C0_H168"
@@ -199,6 +199,29 @@ class CombinationConfig(_Strict):
 
     def all_pooled_models(self) -> set[str]:
         return {m for pool in self.pools().values() for m in pool}
+
+
+class HypothesisFamily(_Strict):
+    """Rodzina hipotez głównych: każde porównanie to wariant z 'compare' kontra 'reference'
+    (różnica dziennych strat compare - reference; ujemna: wariant lepszy)."""
+
+    question: str = ""
+    reference: str
+    compare: list[str]
+
+
+class EvaluationConfig(_Strict):
+    # rodziny hipotez głównych (plan analizy); poprawka Holma w obrębie rodziny
+    families: dict[str, HypothesisFamily] = Field(default_factory=dict)
+    # scenariusze temperatury, w których wniosek musi się potwierdzić: większa z wartości p,
+    # Holm w rodzinie, zgodny kierunek różnicy
+    confirm_scenarios: list[str] = Field(default_factory=lambda: ["oracle", "persistence"])
+    alpha: float = 0.05
+    # odniesienie dla opisowej tabeli DM i przedziałów bootstrapowych
+    reference: str = "C3"
+    # doby testowe oglądane przed zamrożeniem planu (pilotaże, przebiegi techniczne);
+    # analiza wrażliwości: hipotezy główne bez tych dób
+    seen_days: list[dt.date] = Field(default_factory=list)
 
 
 class ExecutionConfig(_Strict):
@@ -233,6 +256,7 @@ class ExperimentConfig(_Strict):
     models: list[ModelSpec]
     combination: CombinationConfig
     identification: IdentificationConfig = IdentificationConfig()
+    evaluation: EvaluationConfig = EvaluationConfig()
     execution: ExecutionConfig = ExecutionConfig()
     # plik z wynikiem identyfikacji (prognozowanie identify); nadpisuje parametry modeli
     identified_params: Path | None = None

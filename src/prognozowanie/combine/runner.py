@@ -21,7 +21,8 @@ from prognozowanie.config import ExperimentConfig
 
 log = logging.getLogger(__name__)
 BLOCKS = {1: (1, 24), 2: (25, 48)}
-HISTORY_METHODS = ("C1", "C2", "C5", "C6")  # metody uczone na historii prognoz (parametr K)
+# metody uczone na historii prognoz (parametr K)
+HISTORY_METHODS = ("C1", "C2", "C5", "C6", "C7", "C8")
 
 
 def min_history(k: int) -> int:
@@ -169,7 +170,7 @@ def _one(method, k, hours, origin, block, F, wide, fitted_w, actual, first_archi
         if fw.index.max() >= origin:
             raise RuntimeError("C0: wartości dopasowane z przyszłości")
         return (*M.ols(fw.to_numpy(), actual.reindex(fw.index).to_numpy(), F), 0)
-    # C1, C2, C5, C6: historia prognoz tego samego bloku
+    # C1, C2, C5-C8: historia prognoz tego samego bloku
     tr = training_origins(origin, block, k)
     if tr[0] < first_archived:
         return None  # rozgrzewka: okno historii sięga przed pierwszą zapisaną dobę
@@ -190,17 +191,104 @@ def _one(method, k, hours, origin, block, F, wide, fitted_w, actual, first_archi
         return (*M.inverse_mse(Ft, yt, F), n_used)
     if method == "C6":
         return (*M.select_best(Ft, yt, F), n_used)
+    if method == "C7":
+        return (*M.calibrate_level(Ft, yt, F), n_used)
+    if method == "C8":
+        return (*M.calibrate_affine(Ft, yt, F), n_used)
     raise ValueError(method)
 
 
 def run_combination(cfg: ExperimentConfig, run_dir: Path) -> tuple[Path, Path]:
+    """Łączenie partiami: osobno dla każdej pary (scenariusz, losowanie), z zapisem do
+    combined/<scenariusz>__<losowanie>.parquet i weights/<...>.parquet. W pamięci jest
+    naraz tylko jedna partia wyników (pełna konfiguracja to dziesiątki milionów wierszy)."""
     from prognozowanie.backtest import load_archive
 
     archive = load_archive(run_dir, models=sorted(cfg.combination.all_pooled_models()))
+    for col in ("model", "scenario", "kind"):
+        archive[col] = archive[col].astype("category")
     actual = pd.read_parquet(run_dir / "actuals.parquet")["load"]
-    combined, weights = combine(cfg, archive, actual)
-    p1, p2 = run_dir / "combined.parquet", run_dir / "weights.parquet"
-    combined.to_parquet(p1, index=False)
-    weights.to_parquet(p2, index=False)
-    log.info("łączenie: %d wierszy prognoz, %d zestawów wag", len(combined), len(weights))
-    return p1, p2
+    cdir, wdir = run_dir / "combined", run_dir / "weights"
+    for d in (cdir, wdir):
+        d.mkdir(exist_ok=True)
+        for old in d.glob("*.parquet"):  # wyniki łączenia liczone zawsze od nowa
+            old.unlink()
+    for name in ("combined.parquet", "weights.parquet"):  # stary układ (jeden plik)
+        (run_dir / name).unlink(missing_ok=True)
+    fitted = archive[archive["kind"] == "fitted"]
+    fc = archive[archive["kind"] == "forecast"]
+    n_rows = n_w = 0
+    for (scen, draw), part in fc.groupby(["scenario", "draw"], sort=True, observed=True):
+        sub = pd.concat([part, fitted], ignore_index=True)
+        combined, weights = combine(cfg, sub, actual)
+        stem = f"{scen}__{int(draw)}"
+        if not combined.empty:
+            combined.to_parquet(cdir / f"{stem}.parquet", index=False)
+            weights.to_parquet(wdir / f"{stem}.parquet", index=False)
+        n_rows += len(combined)
+        n_w += len(weights)
+        log.info("łączenie %s: %d wierszy prognoz", stem, len(combined))
+    log.info("łączenie: razem %d wierszy prognoz, %d zestawów wag", n_rows, n_w)
+    return cdir, wdir
+
+
+def leave_one_day_out(
+    archive: pd.DataFrame,
+    actual: pd.Series,
+    models: list[str],
+    origins: pd.DatetimeIndex,
+    k: int,
+) -> pd.DataFrame:
+    """Diagnostyka stabilności C1 (uzupełnienie audytu): dla każdej doby wydania usuwamy
+    kolejno jedną całą dobę z historii wag (blok D+1), ponownie szacujemy regresję łączącą
+    i stosujemy ją do tych samych bieżących prognoz. Zapisujemy sumę modułów zmian wag
+    i średnią godzinową zmianę prognozy (w jednostkach zapotrzebowania). To wpływ jednej
+    doby uczącej, nie przedział predykcji. Tylko wydania z pełną historią K dób."""
+    fc = archive[(archive["kind"] == "forecast") & archive["model"].isin(models)].copy()
+    fc = fc[fc["horizon"] > 24]
+    wide = {
+        o: g.pivot(index="target", columns="model", values="value")[models]
+        for o, g in fc.groupby("origin")
+        if set(models) <= set(g["model"].unique())
+    }
+    rows = []
+    for origin in origins:
+        if origin not in wide:
+            continue
+        tr = training_origins(origin, 2, k)
+        mats = [wide[o] for o in tr if o in wide]
+        if len(mats) < k:
+            continue
+        F = wide[origin].to_numpy()
+        Ft = pd.concat(mats)
+        pred0, w0, _ = M.ols(Ft.to_numpy(), actual.reindex(Ft.index).to_numpy(), F)
+        dw, dp = [], []
+        for i in range(k):
+            Fi = pd.concat(mats[:i] + mats[i + 1 :])
+            pred, w, _ = M.ols(Fi.to_numpy(), actual.reindex(Fi.index).to_numpy(), F)
+            dw.append(float(np.abs(w - w0).sum()))
+            dp.append(float(np.abs(pred - pred0).mean()))
+        rows.append(
+            {
+                "origin": origin,
+                "k": k,
+                "median_weight_change": float(np.median(dw)),
+                "max_weight_change": float(np.max(dw)),
+                "median_forecast_change": float(np.median(dp)),
+                "max_forecast_change": float(np.max(dp)),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def load_combined(run_dir: Path, scenarios: list[str] | None = None, what: str = "combined"):
+    """Wyniki łączenia (what = "combined" albo "weights"), opcjonalnie tylko dla scenariuszy."""
+    d = run_dir / what
+    if not d.exists():
+        return pd.DataFrame()
+    files = sorted(d.glob("*.parquet"))
+    if scenarios is not None:
+        files = [f for f in files if f.stem.rsplit("__", 1)[0] in set(scenarios)]
+    if not files:
+        return pd.DataFrame()
+    return pd.concat((pd.read_parquet(f) for f in files), ignore_index=True)

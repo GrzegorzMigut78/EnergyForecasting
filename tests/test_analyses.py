@@ -71,7 +71,7 @@ def test_break_even_interpolates_crossing():
             "MAE": [8.0, 10.0, 12.0, 11.0, 11.0, 11.0],
         }
     )
-    be = an.break_even(sens).set_index("model")
+    be = an.break_even(sens, ["N"]).set_index("model")
     assert be.loc["T", "reference"] == "N" and np.isclose(be.loc["T", "break_even_sd_day2"], 1.5)
 
 
@@ -89,23 +89,63 @@ def test_k_profile_parses_pools_and_reference():
     assert np.isclose(kp.loc[("plus_lgbm", "C6", 14), "vs_C3"], -1.5)
 
 
-def test_primary_tests_apply_holm_within_family():
+def test_primary_tests_apply_holm_within_family_and_keep_missing():
+    from prognozowanie.config import HypothesisFamily
+
     rng = np.random.default_rng(1)
     n = 60
+    dates = pd.date_range("2002-08-01", periods=n, freq="D")
     base = rng.normal(10, 1, n)
     losses = pd.DataFrame(
         {
             "C3": base,
-            "C1_K7": base - 0.5 + rng.normal(0, 0.2, n),
-            "C2_K7": base + rng.normal(0, 0.2, n),
+            "C1_K2": base - 0.5 + rng.normal(0, 0.2, n),
+            "C1_K3": base + rng.normal(0, 0.2, n),
             "A": base + 1.0 + rng.normal(0, 0.2, n),
-        }
+        },
+        index=dates,
     )
-    fams = an.primary_families(["A"], [], [7], ["C1", "C2", "C3"])
+    fams = {
+        "H1": HypothesisFamily(reference="C3", compare=["C1_K2", "C1_K3", "C1_K7"]),
+        "H3": HypothesisFamily(reference="C1_K2", compare=["A"]),
+    }
     res = an.primary_tests(losses, fams)
-    h1 = res[res["family"].str.startswith("H1")].set_index("model")
-    assert set(h1.index) == {"C1_K7", "C2_K7"}
-    assert (h1["p_holm"] >= h1["p_value"]).all()
-    assert h1.loc["C1_K7", "mean_diff"] < 0
-    h3 = res[res["family"].str.startswith("H3")]
-    assert list(h3["model"]) == ["A"] and np.isclose(h3["p_holm"], h3["p_value"]).all()
+    h1 = res[res["family"] == "H1"].set_index("model")
+    # brakujący wariant zostaje w tabeli i liczy się do liczebności rodziny
+    assert h1.loc["C1_K7", "status"] == "nieoceniony" and np.isnan(h1.loc["C1_K7", "p_value"])
+    assert (
+        h1.loc["C1_K2", "mean_diff"] < 0 and h1.loc["C1_K2", "p_holm"] >= h1.loc["C1_K2", "p_value"]
+    )
+    assert np.isclose(h1.loc["C1_K2", "p_holm"], min(1, 3 * h1.loc["C1_K2", "p_value"]))
+    h3 = res[res["family"] == "H3"].set_index("model")
+    assert h3.loc["A", "mean_diff"] > 0 and {"p_h2", "p_bw14", "p_no_hln"} <= set(res.columns)
+
+
+def test_confirmation_requires_both_scenarios_and_same_direction():
+    from prognozowanie.config import HypothesisFamily
+
+    fams = {"H1": HypothesisFamily(reference="C3", compare=["X", "Y"])}
+    k = {"family": ["H1", "H1"], "reference": ["C3", "C3"], "model": ["X", "Y"]}
+    t_o = pd.DataFrame({**k, "mean_diff": [-1.0, -1.0], "p_value": [0.001, 0.001]})
+    t_p = pd.DataFrame({**k, "mean_diff": [-0.5, 0.3], "p_value": [0.01, 0.001]})
+    c = an.confirm_across_scenarios({"oracle": t_o, "persistence": t_p}, fams, 0.05).set_index(
+        "model"
+    )
+    assert np.isclose(c.loc["X", "p_max"], 0.01) and bool(c.loc["X", "confirmed"])
+    assert not c.loc["Y", "same_direction"] and not c.loc["Y", "confirmed"]
+
+
+def test_mae_cancellation_identity_and_asymmetric_loss():
+    rng = np.random.default_rng(4)
+    errs = {m: rng.normal(0, 1, (6, 48)) for m in ("A", "B", "C")}
+    frame = _scen(errs)
+    summ, by_hour = an.mae_cancellation(frame, ["A", "B", "C"])
+    d2 = frame[frame["block"] == DAY2]
+    e = d2.pivot_table(index=["origin", "target"], columns="model", values="error")
+    assert np.isclose(summ["MAE_C3"].iloc[0], e.mean(axis=1).abs().mean())
+    assert np.isclose(
+        summ["MAE_mean_of_models"].iloc[0] - summ["cancellation"].iloc[0], summ["MAE_C3"].iloc[0]
+    )
+    assert len(by_hour) == 24
+    asym = an.asymmetric_loss(frame, "A")
+    assert np.allclose(asym["U"] + asym["O"], asym["MAE"])

@@ -6,7 +6,7 @@
 #   update                         git pull + instalacja zależności z uv.lock
 #   test                           testy projektu
 #   prognozowanie <podpolecenie> configs/... [opcje]
-#       podpolecenia: check-data, identify, run, all, combine, evaluate
+#       podpolecenia: check-data, identify, run, all, combine, evaluate, status
 # Inne polecenia, znaki spoza [A-Za-z0-9_./:=,+-], ścieżki bezwzględne i ".." są odrzucane.
 # Nic nie jest przekazywane do powłoki (bez eval): argumenty trafiają wprost do programu.
 #
@@ -17,7 +17,7 @@ set -uo pipefail
 REPO="${REPO:-$HOME/EnergyForecasting}"
 Q="${KOLEJKA:-/mnt/c/EnergyForecasting/kolejka}"
 SAFE='^[A-Za-z0-9_./:=,+-]+$'
-ALLOWED_SUB=" check-data identify run all combine evaluate "
+ALLOWED_SUB=" check-data identify run all combine evaluate status "
 export PATH="$HOME/.local/bin:$PATH"
 mkdir -p "$Q/done" "$Q/failed" "$Q/logs"
 

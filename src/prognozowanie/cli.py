@@ -13,12 +13,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+import warnings
 
 import pandas as pd
 
 
 def _setup_logging(verbose: bool) -> None:
+    # ostrzeżenia bibliotek (np. o zbieżności) najwyżej raz na miejsce w kodzie, także w
+    # procesach równoległych (dziedziczą zmienną środowiskową): przy setkach tysięcy dopasowań
+    # powtarzane ostrzeżenia zalewałyby dziennik. Zbieżność i tak trafia do metadanych.
+    os.environ.setdefault("PYTHONWARNINGS", "once")
+    warnings.simplefilter("once")
+    logging.captureWarnings(True)
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
@@ -123,8 +131,31 @@ def cmd_evaluate(a):
     from prognozowanie.evaluate import evaluate_run
 
     cfg = load_experiment_config(a.config)
-    out = evaluate_run(cfg, run_dir_for(cfg, a.run_name), scenario=a.scenario)
-    print(f"Raport: {out}")
+    # domyślnie wszystkie scenariusze potwierdzenia (plan analizy: temperatura zmierzona
+    # i persystencja); ostatni oceniany scenariusz zapisuje tabelę potwierdzenia
+    scenarios = [a.scenario] if a.scenario else list(cfg.evaluation.confirm_scenarios)
+    for scen in scenarios:
+        out = evaluate_run(cfg, run_dir_for(cfg, a.run_name), scenario=scen)
+        print(f"Raport ({scen}): {out}")
+    return 0
+
+
+def cmd_status(a):
+    from prognozowanie.backtest import origins_for
+    from prognozowanie.backtest.engine import run_dir_for
+    from prognozowanie.config import load_experiment_config
+    from prognozowanie.evaluate.status import run_status
+
+    cfg = load_experiment_config(a.config)
+    origins = origins_for(cfg)
+    if a.start:
+        origins = origins[origins >= pd.Timestamp(a.start)]
+    if a.end:
+        origins = origins[origins <= pd.Timestamp(a.end)]
+    run_dir = run_dir_for(cfg, a.run_name)
+    text = run_status(cfg, run_dir, origins)
+    (run_dir / "status.md").write_text(text, encoding="utf-8")
+    print(text)
     return 0
 
 
@@ -174,7 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
             action="store_true",
             help="dopuść parametry wstępne (tylko próba techniczna, nie wyniki)",
         )
-        s.add_argument("--scenario", default="oracle")
+        s.add_argument("--scenario", help="domyślnie: scenariusze potwierdzenia z konfiguracji")
         s.set_defaults(func=func)
 
     s = sub.add_parser("combine", help="łączenie prognoz na gotowym archiwum")
@@ -185,8 +216,15 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("evaluate", help="miary i testy")
     s.add_argument("config")
     s.add_argument("--run-name")
-    s.add_argument("--scenario", default="oracle")
+    s.add_argument("--scenario", help="domyślnie: scenariusze potwierdzenia z konfiguracji")
     s.set_defaults(func=cmd_evaluate)
+
+    s = sub.add_parser("status", help="kontrola techniczna przebiegu, bez miar dokładności")
+    s.add_argument("config")
+    s.add_argument("--run-name")
+    s.add_argument("--start")
+    s.add_argument("--end")
+    s.set_defaults(func=cmd_status)
     return p
 
 

@@ -109,3 +109,30 @@ def test_mcs_and_bootstrap():
     ci = bootstrap_ci(losses, reference="good", n_boot=500)
     assert ci.loc["bad", "diff_ci_low"] > 0
     assert ci.loc["same", "diff_ci_low"] < 0 < ci.loc["same", "diff_ci_high"]
+
+
+def test_dm_respects_date_gaps_and_identical_losses():
+    rng = np.random.default_rng(3)
+    dates = pd.date_range("2002-08-01", periods=120, freq="D")
+    a = np.abs(rng.normal(0, 1, 120))
+    b = a + rng.normal(0.2, 0.5, 120)
+    keep = np.ones(120, bool)
+    keep[40:47] = False  # tydzień wykluczony z porównania
+    with_gaps = diebold_mariano(a[keep], b[keep], dates=dates[keep])
+    assert with_gaps["n"] == 113 and with_gaps["gaps"] == 7 and with_gaps["dm"] < 0
+    same = diebold_mariano(a, a)
+    assert same["p_value"] == 1.0 and same["mean_diff"] == 0
+    h2 = diebold_mariano(a, b, dates=dates, h=2)
+    h1 = diebold_mariano(a, b, dates=dates, h=1)
+    assert abs(h2["dm"]) < abs(h1["dm"])  # poprawka HLN dla h = 2 jest ostrzejsza
+
+
+def test_bootstrap_blocks_follow_calendar():
+    from prognozowanie.evaluate.inference import bootstrap_ci
+
+    dates = pd.date_range("2002-08-01", periods=60, freq="D")
+    L = pd.DataFrame({"A": np.arange(60.0), "B": np.arange(60.0) + 1}, index=dates)
+    L = L.drop(dates[20:27])
+    ci = bootstrap_ci(L, reference="A", n_boot=200, seed=1)
+    assert ci.attrs["gaps"] == 7 and ci.attrs["n_days"] == 53
+    assert np.isclose(ci.loc["B", "diff_vs_ref"], 1.0)

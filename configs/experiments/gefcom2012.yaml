@@ -92,7 +92,8 @@ models:
 
 combination:
   base_models: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA]
-  methods: [C0, C1, C2, C3, C4, C5, C6]  # C6: wybór modelu najlepszego w ostatnich K dobach
+  # C6: wybór modelu najlepszego w ostatnich K dobach; C7: C3 + poziom; C8: a + b * C3
+  methods: [C0, C1, C2, C3, C4, C5, C6, C7, C8]
   k_days: [2, 3, 7, 14, 28]
   c0_fitted_hours: [48, 72, 168]  # C0 (artykuł), C0_H72, C0_H168
   # pula rozszerzona (sekcja 11): czy schemat korzysta z lepszego modelu bazowego
@@ -114,6 +115,27 @@ identification:
     - [[1, 0, 1], [1, 0, 0]]
   validation_origins: 20
   n_trials: 100
+
+# Rodziny hipotez głównych (plan analizy, sekcja 3). Metoda artykułu: regresja łącząca na
+# prognozach z ostatnich 2 dób (C1_K2), kontrolnie K = 3 i 7; średnia C3 tylko jako punkt
+# odniesienia. Różnica = compare - reference (ujemna: wariant z compare lepszy).
+evaluation:
+  families:
+    H1:
+      question: czy regresja łącząca wygrywa ze zwykłą średnią
+      reference: C3
+      compare: [C1_K2, C1_K3, C1_K7]
+    H2:
+      question: czy wagi z wartości dopasowanych (procedura pierwotna) są gorsze od wag z prognoz, na tych samych 48 obserwacjach
+      reference: C1_K2
+      compare: [C0]
+    H3:
+      question: czy regresja łącząca wygrywa z każdym modelem pojedynczym i benchmarkiem
+      reference: C1_K2
+      compare: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, SNAIVE, HONG, LGBM]
+  confirm_scenarios: [oracle, persistence]
+  alpha: 0.05
+  reference: C3
 
 execution:
   n_jobs: 2

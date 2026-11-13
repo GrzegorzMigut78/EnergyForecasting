@@ -98,7 +98,8 @@ models:
 
 combination:
   base_models: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA]
-  methods: [C0, C1, C2, C3, C4, C5, C6]  # C6: wybór modelu najlepszego w ostatnich K dobach
+  # C6: wybór modelu najlepszego w ostatnich K dobach; C7: C3 + poziom; C8: a + b * C3
+  methods: [C0, C1, C2, C3, C4, C5, C6, C7, C8]
   k_days: [2, 3, 7, 14, 28]
   c0_fitted_hours: [48, 72, 168]  # C0 (artykuł), C0_H72, C0_H168
   # pula rozszerzona (sekcja 11): czy schemat korzysta z lepszego modelu bazowego
@@ -120,6 +121,33 @@ identification:
     - [[1, 0, 1], [1, 0, 0]]
   validation_origins: 20
   n_trials: 100
+
+# Rodziny hipotez głównych (plan analizy, sekcja 3). Metoda artykułu: regresja łącząca na
+# prognozach z ostatnich 2 dób (C1_K2), kontrolnie K = 3 i 7; średnia C3 tylko jako punkt
+# odniesienia. Różnica = compare - reference (ujemna: wariant z compare lepszy).
+evaluation:
+  families:
+    H1:
+      question: czy regresja łącząca wygrywa ze zwykłą średnią
+      reference: C3
+      compare: [C1_K2, C1_K3, C1_K7]
+    H2:
+      question: czy wagi z wartości dopasowanych (procedura pierwotna) są gorsze od wag z prognoz, na tych samych 48 obserwacjach
+      reference: C1_K2
+      compare: [C0]
+    H3:
+      question: czy regresja łącząca wygrywa z każdym modelem pojedynczym i benchmarkiem
+      reference: C1_K2
+      compare: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, SNAIVE, HONG, LGBM]
+  confirm_scenarios: [oracle, persistence]
+  alpha: 0.05
+  reference: C3
+  # doby testowe oglądane przed zamrożeniem planu (plan analizy, sekcja 7): przebiegi
+  # techniczne 1-6.08.2002 i 20 dób porównania CSS z dokładną wiarygodnością
+  seen_days: [2002-08-01, 2002-08-02, 2002-08-03, 2002-08-04, 2002-08-05, 2002-08-06,
+    2002-08-20, 2002-08-21, 2002-08-25, 2002-09-17, 2002-10-09, 2002-10-28, 2002-10-29,
+    2002-11-08, 2002-11-19, 2002-12-03, 2003-01-03, 2003-01-16, 2003-02-15, 2003-03-10,
+    2003-04-13, 2003-04-26, 2003-05-05, 2003-05-21, 2003-06-06, 2003-06-09]
 
 execution:
   n_jobs: 2

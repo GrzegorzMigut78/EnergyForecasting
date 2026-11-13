@@ -40,13 +40,17 @@ results/               wyniki przebiegów (poza repozytorium)
 
 ### Windows (zalecane: WSL2)
 
-1. W PowerShellu uruchomionym jako administrator: `wsl --install`, potem restart.
-   Powstanie Ubuntu; dalsze kroki wykonuj w jego terminalu.
-2. Zainstaluj uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-3. Sklonuj repozytorium i wejdź do katalogu.
-4. `uv sync` (tworzy środowisko `.venv` z wersjami z `uv.lock`).
-5. Skopiuj surowy plik danych do `data/raw/ElecEner_long.xlsx`.
-6. Sprawdzenie: `uv run prognozowanie check-data configs/datasets/elecener.yaml`
+1. W PowerShellu: `wsl --install -d Ubuntu` (przy Docker Desktop WSL2 zwykle już jest;
+   bez niego potrzebne uprawnienia administratora i restart). Dalsze kroki w terminalu Ubuntu.
+2. Pakiety systemowe: `sudo apt-get install -y git curl gh libgomp1`
+   (`libgomp1` potrzebuje LightGBM).
+3. Zainstaluj uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+4. Sklonuj repozytorium i wejdź do katalogu.
+5. `uv sync --frozen --extra gefcom` (środowisko `.venv` z wersjami z `uv.lock`). Wersję
+   Pythona (3.12) wskazuje `.python-version`; uv pobierze ją sam. Na Pythonie 3.13 i 3.14
+   statsforecast 2.0.1 nie ma gotowych pakietów i wymaga kompilatora C++.
+6. Skopiuj surowy plik danych do `data/raw/ElecEner_long.xlsx`.
+7. Sprawdzenie: `uv run prognozowanie check-data configs/datasets/elecener.yaml`
    oraz `uv run pytest`.
 
 VS Code z rozszerzeniem „WSL” pozwala pracować na tym katalogu z poziomu Windowsa.
@@ -64,16 +68,30 @@ uv run prognozowanie check-data configs/datasets/elecener.yaml --export dane.xls
 
 # 2. identyfikacja struktur na okresie identyfikacji (strojenie trwa kilka godzin)
 uv run prognozowanie identify configs/experiments/main.yaml
-#    następnie w configs/experiments/main.yaml:  identified_params: results/identify/main/identified.yaml
+#    następnie w configs/experiments/main.yaml:  identified_params: results/identify/main/base/identified.yaml
 
-# 3. backtest, łączenie, raport
+# 3. backtest, łączenie, raport (domyślnie dla obu scenariuszy potwierdzenia)
 uv run prognozowanie run configs/experiments/main.yaml --jobs 8
 uv run prognozowanie combine configs/experiments/main.yaml
-uv run prognozowanie evaluate configs/experiments/main.yaml --scenario oracle
+uv run prognozowanie evaluate configs/experiments/main.yaml
 
-# fragment okresu, np. do szybkiej próby
-uv run prognozowanie run configs/experiments/main.yaml --run-name proba --start 2002-08-01 --end 2002-08-07
+# kontrola techniczna w trakcie (kompletność, awarie, zbieżność, czasy), bez miar dokładności
+uv run prognozowanie status configs/experiments/main.yaml --start 2002-08-01 --end 2002-10-31
+
+# próba techniczna na parametrach wstępnych (przed identyfikacją) wymaga jawnej zgody
+uv run prognozowanie all configs/experiments/main.yaml --run-name proba --start 2002-07-10 --end 2002-07-20 --allow-provisional
 ```
+
+Przebieg odmawia pracy na parametrach wstępnych (modele bez kompletnej identyfikacji: strojenie
+i rzędy ARIMA) i na wyniku identyfikacji policzonym na innych danych.
+
+### Kolejka zadań (długie obliczenia na własnym komputerze)
+
+`scripts/kolejka.sh` wykonuje po kolei pliki `*.job` z katalogu kolejki (domyślnie
+`/mnt/c/EnergyForecasting/kolejka`). Każdy plik to jedna linia: `update`, `test` albo
+`prognozowanie <podpolecenie> configs/... [opcje]`. Inne polecenia, ścieżki bezwzględne, „..”
+i znaki specjalne są odrzucane; nic nie przechodzi przez powłokę. Dziennik każdego zadania:
+`kolejka/logs/`, sygnał życia: `kolejka/heartbeat`.
 
 Wyniki: `results/<nazwa przebiegu>/` zawiera:
 
@@ -83,7 +101,9 @@ Wyniki: `results/<nazwa przebiegu>/` zawiera:
 | `meta/<model>/<doba>.json` | specyfikacja modelu, status (także awaria), współczynniki, zbieżność, czas; zapisywany jako ostatni, więc oznacza parę jako policzoną |
 | `config.yaml` | migawka wejść wspólnych: dane z korektami, SHA-256, horyzont, okno, scenariusze temperatury, ziarno |
 | `runs/` | ślad każdego wywołania: pełna konfiguracja, środowisko, zakres prac |
-| `combined.parquet`, `weights.parquet`, `report/` | łączenie i ocena (liczone od nowa z archiwum) |
+| `combined/<scenariusz>__<losowanie>.parquet`, `weights/...` | łączenie, partiami według scenariusza i losowania (liczone od nowa z archiwum) |
+| `report/` | ocena: tabele CSV, raport Markdown dla każdego scenariusza, wykresy |
+| `status.md` | kontrola techniczna (`prognozowanie status`) |
 
 Zasady wznawiania:
 
@@ -102,11 +122,17 @@ Zasady wznawiania:
 `results/<przebieg>/report/`: miary (MAE, RMSE, MASE) wg bloku horyzontu, typu dnia, miesiąca
 i godziny horyzontu; test Diebolda-Mariano; przedziały bootstrapowe (bloki 7 dób); zbiór
 modeli najlepszych (MCS, T_max); stabilność wag; lista awarii modeli; wykresy PNG z danymi CSV.
-Porównania liczone są wyłącznie na dobach wspólnych dla wszystkich modeli. Hipotezy główne (rodziny H1-H4, test DM wobec C3 z poprawką Holma w rodzinie)
-i analizy dodatkowe (profil K, pojedyncze okno 48 h, różnorodność błędów, ablacja korekty
-ARIMA, próg opłacalności prognozy temperatury, koszt obliczeń) liczą się zgodnie z planem
-analizy: `docs/Plan_analizy.md`. Scenariusze główne to temperatura zmierzona i persystencja,
-więc ocenę uruchamiamy dla obu (`--scenario oracle`, `--scenario persistence`).
+Hipotezy główne są zapisane w konfiguracji (`evaluation.families`, plan analizy:
+`docs/Plan_analizy.md`): test DM wobec odniesienia rodziny, Holm w rodzinie z planowaną
+liczebnością, kontrole konwencji (h = 2, pasmo 14 dób, bez HLN), reguła potwierdzenia
+w scenariuszach temperatury zmierzonej i persystencji (`primary_confirmed.csv`). Analiza główna
+liczy się na dobach wspólnych dla wariantów z rodzin hipotez; zestawienie wszystkich wariantów
+na ich własnych dobach wspólnych; pokrycie każdego planowanego wariantu: `coverage_*.csv`.
+Luki w datach są uwzględniane w wariancji HAC i w bootstrapie (bloki kolejnych dób kalendarza).
+Analizy dodatkowe: profil K, pojedyncze okno 48 h, rozkład MAE średniej (2 min(P, N)),
+wartości dopasowane kontra prognozy przy tej samej liczbie obserwacji, różnorodność błędów,
+ablacja korekty ARIMA, próg opłacalności prognozy temperatury, koszt asymetryczny, usunięcie
+jednej doby z historii wag, koszt obliczeń (dopasowanie, jedna prognoza, pętla scenariuszy).
 
 Prognozy pierwszego stopnia modeli dwustopniowych są archiwizowane osobno (`<model>__stage1`),
 więc ablacja „bez korekty ARIMA” nie wymaga osobnego przebiegu. Wariant C0 można policzyć
