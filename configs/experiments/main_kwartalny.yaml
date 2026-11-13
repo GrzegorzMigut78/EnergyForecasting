@@ -1,0 +1,13 @@
+# Analiza dodatkowa 18 (plan analizy): kwartalna ponowna identyfikacja. Wszystko jak w main.yaml,
+# tylko parametry modeli obowiązują według harmonogramu: do 31.10.2002 z identyfikacji głównej,
+# potem z identyfikacji na 151 dobach przed 1.11.2002, 1.02.2003 i 1.05.2003
+# (prognozowanie identify configs/experiments/main.yaml --as-of RRRR-MM-DD).
+extends: main.yaml
+name: main_kwartalny
+description: Przebieg dodatkowy z kwartalną ponowną identyfikacją (plan, punkt 18).
+identified_params: null
+identified_schedule:
+  - {valid_from: 2002-07-01, params: results/identify/main/base/identified.yaml}
+  - {valid_from: 2002-11-01, params: results/identify/main/as_of_2002-11-01/identified.yaml}
+  - {valid_from: 2003-02-01, params: results/identify/main/as_of_2003-02-01/identified.yaml}
+  - {valid_from: 2003-05-01, params: results/identify/main/as_of_2003-05-01/identified.yaml}

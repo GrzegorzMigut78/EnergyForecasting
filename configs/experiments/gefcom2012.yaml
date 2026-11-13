@@ -5,6 +5,8 @@ name: gefcom2012
 description: Walidacja zewnętrzna na GEFCom2012, test 1.06.2007-28.06.2008.
 dataset: configs/datasets/gefcom2012.yaml
 seed: 20261111
+# wynik identyfikacji z 13.11.2026; przebieg odmówi pracy, jeśli wynik jest niepełny
+identified_params: results/identify/gefcom2012/base/identified.yaml
 
 periods:
   identification: {start: 2006-11-29, end: 2007-04-30}

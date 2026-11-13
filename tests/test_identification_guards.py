@@ -1,6 +1,7 @@
 """Zabezpieczenia identyfikacji i przebiegu (uwagi audytora z 11.11.2026)."""
 
 import datetime as dt
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -85,3 +86,41 @@ def test_run_refuses_provisional_and_foreign_identification(dataset, experiment,
         check_identification_data(foreign, dataset.source_sha256)
     f.write_text(yaml.safe_dump({"dataset_sha256": dataset.source_sha256}))
     check_identification_data(foreign, dataset.source_sha256)
+
+
+def test_schedule_requires_complete_files(dataset, experiment, tmp_path):
+    """Przebieg z harmonogramem identyfikacji (analiza dodatkowa 18): każdy plik kompletny,
+    pierwszy wpis obowiązuje od początku prognoz; inaczej przebieg odmawia pracy."""
+    from prognozowanie.backtest import run_backtest
+    from prognozowanie.config import ScheduleEntry
+
+    origins = pd.date_range("2002-08-01", periods=1, freq="D")
+    part = tmp_path / "czesciowy.yaml"
+    part.write_text(yaml.safe_dump({"as_of": "2002-04-01", "steps_done": ["tune"]}))
+    strict = experiment.model_copy(
+        update={
+            "execution": experiment.execution.model_copy(update={"allow_provisional": False}),
+            "identified_schedule": [
+                ScheduleEntry(valid_from=experiment.periods.forecast_start, params=part)
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="czesciowy"):
+        run_backtest(strict, dataset, origins=origins)
+
+
+def test_quarterly_config_extends_main():
+    from prognozowanie.config import _read_experiment_yaml
+
+    root = Path(__file__).resolve().parents[1]
+    raw = _read_experiment_yaml(root / "configs/experiments/main_kwartalny.yaml")
+    assert raw["identified_params"] is None
+    assert [str(e["valid_from"]) for e in raw["identified_schedule"]] == [
+        "2002-07-01",
+        "2002-11-01",
+        "2003-02-01",
+        "2003-05-01",
+    ]
+    main = _read_experiment_yaml(root / "configs/experiments/main.yaml")
+    same = set(main) - {"name", "description", "identified_params"}
+    assert {k: raw[k] for k in same} == {k: main[k] for k in same}

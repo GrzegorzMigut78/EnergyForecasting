@@ -28,7 +28,12 @@ import yaml
 from joblib import Parallel, delayed
 
 from prognozowanie.backtest.scenarios import NOISE_GENERATOR, scenario_temperatures
-from prognozowanie.config import ExperimentConfig, check_identification_data, model_specs_for
+from prognozowanie.config import (
+    ExperimentConfig,
+    check_identification_data,
+    identification_complete,
+    model_specs_for,
+)
 from prognozowanie.data import Dataset
 from prognozowanie.models import build_model
 
@@ -443,6 +448,16 @@ def run_backtest(
 ) -> list[OriginResult]:
     allow = cfg.execution.allow_provisional if allow_provisional is None else allow_provisional
     provisional = [m.name for m in cfg.models if m.provisional]
+    if cfg.identified_schedule:
+        # harmonogram identyfikacji: parametry z plików obowiązujących od valid_from; każdy
+        # plik musi być kompletny (model_specs_for sprawdza as_of dla każdej doby)
+        provisional = [
+            str(e.params)
+            for e in cfg.identified_schedule
+            if not identification_complete(yaml.safe_load(Path(e.params).read_text("utf-8")))
+        ]
+        if cfg.identified_schedule[0].valid_from > cfg.periods.forecast_start:
+            provisional.append(f"brak parametrów przed {cfg.identified_schedule[0].valid_from}")
     if provisional and not allow:
         raise RuntimeError(
             f"modele z parametrami wstępnymi (bez kompletnej identyfikacji): {provisional}. "
