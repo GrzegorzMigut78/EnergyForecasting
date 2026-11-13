@@ -81,9 +81,9 @@ Suplement:
 16. Stabilność wag (zmienność z doby na dobę, odsetek wag ujemnych, częstość zmiany modelu w C6) oraz usunięcie jednej doby z historii wag C1 (K = 2 i 7): suma modułów zmian wag i średnia godzinowa zmiana prognozy D+1; mediana i 90. percentyl po wydaniach.
 17. Koszt asymetryczny: niedoszacowanie U i przeszacowanie O (MAE = U + O), strata r U + O dla r ∈ {0,5; 1; 2; 4} i stosunek r*, przy którym warianty zamieniają kolejność; bez przeliczania na pieniądze.
 
-Przebiegi dodatkowe (po przebiegu głównym, jeśli starczy czasu obliczeń):
+Przebiegi dodatkowe (po przebiegu głównym; punkt 18 przesądzony, punkt 19 jeśli starczy czasu obliczeń):
 
-18. **Kwartalna ponowna identyfikacja** przed 1.11.2002, 1.02.2003 i 1.05.2003, każda na poprzedzających 5 miesiącach (sierpień-październik na parametrach z identyfikacji głównej, bo identyfikacja przed 1.08.2002 obejmowałaby kwiecień 2002); porównanie z przebiegiem głównym (R3: adaptacja).
+18. **Kwartalna ponowna identyfikacja** (przyjęta 13.11.2026). Pytanie: ile kosztuje to, że hiperparametry i rzędy dobrano wyłącznie na miesiącach zimowych (R3: adaptacja). Identyfikacja przed 1.11.2002, 1.02.2003 i 1.05.2003, każda na poprzedzającym okresie tej samej długości co identyfikacja główna (151 dób), tą samą procedurą: te same kroki, liczba prób, sito i liczba dób walidacyjnych. Sierpień-październik na parametrach z identyfikacji głównej, bo identyfikacja przed 1.08.2002 obejmowałaby kwiecień 2002. Jedyne porównanie: C1_K2 oraz każdy model pojedynczy, wariant z parametrami stałymi (przebieg główny) kontra odświeżanymi, na wspólnych dobach wydania 1.11.2002-29.06.2003, w scenariuszach oracle i persystencja; różnica MAE D+1 z przedziałem bootstrap i DM bez korekty Holma, wyłącznie opisowo. Tylko ElecEner.
 19. **Okno uczące 56 dób**, te same parametry z identyfikacji (zamrożone; ablacja lekko faworyzuje okno 84); tylko temperatura zmierzona i persystencja.
 
 Odłożone (archiwum wystarcza, liczymy na prośbę recenzenta): rozkład różnicy oracle-persystencja na wkład bieżącej prognozy i historii wag.
@@ -101,7 +101,8 @@ Odłożone (archiwum wystarcza, liczymy na prośbę recenzenta): rozkład różn
 2. **Zamrożenie planu:** etykieta w repozytorium.
 3. **Test kwartałami:** sierpień-październik, listopad-styczeń, luty-kwiecień, maj-czerwiec. Między kwartałami wyłącznie kontrola techniczna (`prognozowanie status`: kompletność, awarie, zbieżność, czasy, rozmiar archiwum), bez miar dokładności.
 4. **Ocena dokładności** raz, po ostatnim kwartale, zgodnie z tym planem.
-5. **Błąd w kodzie wykryty w trakcie:** poprawka, przeliczenie dotkniętych modeli od początku testu i wpis w sekcji 8.
+5. **Błąd w kodzie wykryty w trakcie:** poprawka, przeliczenie dotkniętych modeli od początku testu i wpis w sekcji 9.
+6. **Po przebiegu głównym:** GEFCom2012, potem przebieg z kwartalną ponowną identyfikacją (punkt 18), potem pozostałe przebiegi dodatkowe.
 
 ## 7. Ujawnienie wcześniejszego wglądu w doby testowe
 
