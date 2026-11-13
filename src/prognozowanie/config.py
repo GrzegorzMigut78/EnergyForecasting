@@ -317,13 +317,38 @@ def load_dataset_config(path: str | Path, root: Path | None = None) -> DatasetCo
     return cfg
 
 
-def load_experiment_config(path: str | Path) -> ExperimentConfig:
-    """Wczytuje eksperyment. Jeśli podano identified_params, parametry modeli z tego pliku
-    nadpisują wartości wstępne, a flaga provisional jest zdejmowana."""
-    path = Path(path)
+def _merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """Słowniki łączone rekurencyjnie; listy i wartości proste z 'over' zastępują bazowe."""
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def _read_experiment_yaml(path: Path, _seen: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Wczytuje eksperyment; 'extends: plik.yaml' (ścieżka względem bieżącego pliku) bierze
+    konfigurację bazową i nadpisuje w niej tylko podane klucze (np. okresy przebiegu próbnego)."""
+    path = path.resolve()
+    if path in _seen:
+        raise ValueError(f"cykliczne 'extends': {path}")
     raw = _read_yaml(path)
+    parent = raw.pop("extends", None)
+    if parent is None:
+        return raw
+    return _merge(_read_experiment_yaml(path.parent / parent, (*_seen, path)), raw)
+
+
+def load_experiment_config(path: str | Path, use_identified: bool = True) -> ExperimentConfig:
+    """Wczytuje eksperyment. Jeśli podano identified_params, parametry modeli z tego pliku
+    nadpisują wartości wstępne, a flaga provisional jest zdejmowana. use_identified=False
+    pomija wynik identyfikacji (testy: parametry wstępne niezależnie od stanu results/)."""
+    path = Path(path)
+    raw = _read_experiment_yaml(path)
     # klucze 'x-...' służą wyłącznie jako szablony YAML (kotwice) i nie są częścią schematu
     raw = {k: v for k, v in raw.items() if not str(k).startswith("x-")}
+    if not use_identified:
+        raw.pop("identified_params", None)
+        raw.pop("identified_schedule", None)
     base = _project_root(path)
     ident = raw.get("identified_params")
     identified = None

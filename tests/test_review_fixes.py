@@ -101,7 +101,7 @@ def test_no_leakage_all_models_and_noisy_scenario(dataset):
     from prognozowanie.backtest.engine import run_origin
     from prognozowanie.config import load_experiment_config
 
-    cfg = load_experiment_config(EXPERIMENT_YAML)
+    cfg = load_experiment_config(EXPERIMENT_YAML, use_identified=False)
     scen = [
         s.model_copy(update={"draws": 2}) if s.kind == "noisy" else s
         for s in cfg.temperature_scenarios

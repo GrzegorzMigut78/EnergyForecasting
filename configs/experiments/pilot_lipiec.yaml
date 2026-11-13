@@ -1,0 +1,10 @@
+# Przebieg próbny (plan analizy, sekcja 6, krok 1): pełny potok na lipcu 2002, poza okresem
+# testu. Tu oglądamy tabele, wykresy, czasy i pamięć przed zamrożeniem planu.
+# Wszystko poza nazwą i okresami pochodzi z main.yaml.
+extends: main.yaml
+name: pilot_lipiec
+description: Przebieg próbny, rozgrzewka od 1.07.2002, test próbny 10-31.07.2002.
+
+periods:
+  forecast_start: 2002-07-01
+  test: {start: 2002-07-10, end: 2002-07-31}

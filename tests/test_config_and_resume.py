@@ -7,7 +7,7 @@ from tests.conftest import EXPERIMENT_YAML, needs_data
 
 
 def test_main_config_is_valid():
-    cfg = load_experiment_config(EXPERIMENT_YAML)
+    cfg = load_experiment_config(EXPERIMENT_YAML, use_identified=False)
     assert cfg.periods.test.start.isoformat() == "2002-08-01"
     assert set(cfg.combination.base_models) <= {m.name for m in cfg.models}
 
@@ -24,14 +24,14 @@ def test_overlapping_periods_rejected():
 
 
 def test_unknown_key_rejected():
-    raw = load_experiment_config(EXPERIMENT_YAML).model_dump()
+    raw = load_experiment_config(EXPERIMENT_YAML, use_identified=False).model_dump()
     raw["literowka"] = 1
     with pytest.raises(ValidationError):
         ExperimentConfig.model_validate(raw)
 
 
 def test_combination_needs_defined_models():
-    raw = load_experiment_config(EXPERIMENT_YAML).model_dump()
+    raw = load_experiment_config(EXPERIMENT_YAML, use_identified=False).model_dump()
     raw["combination"]["base_models"].append("NIEZNANY")
     with pytest.raises(ValidationError, match="bez definicji"):
         ExperimentConfig.model_validate(raw)
@@ -94,7 +94,7 @@ def test_identification_schedule(tmp_path):
 
     from prognozowanie.config import ScheduleEntry, model_specs_for
 
-    cfg = load_experiment_config(EXPERIMENT_YAML)
+    cfg = load_experiment_config(EXPERIMENT_YAML, use_identified=False)
     p1, p2 = tmp_path / "a.yaml", tmp_path / "b.yaml"
     p1.write_text(
         yaml.safe_dump({"as_of": "2002-04-01", "models": {"ARIMA": {"order": [1, 0, 0]}}})

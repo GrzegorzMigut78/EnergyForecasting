@@ -26,7 +26,7 @@ def dataset():
 @pytest.fixture
 def experiment(tmp_path):
     """Eksperyment główny z szybkimi modelami i wynikami w katalogu tymczasowym."""
-    cfg = load_experiment_config(EXPERIMENT_YAML)
+    cfg = load_experiment_config(EXPERIMENT_YAML, use_identified=False)
     models = [m for m in cfg.models if m.name in FAST_MODELS]
     comb = cfg.combination.model_copy(update={"base_models": ["MR_ARIMA", "ARIMA"]})
     scen = [s for s in cfg.temperature_scenarios if s.kind != "noisy"]
