@@ -6,6 +6,8 @@ name: main
 description: Symulacja operacyjna na ElecEner Long, test 1.08.2002-29.06.2003.
 dataset: configs/datasets/elecener.yaml
 seed: 20261111
+# wynik identyfikacji z 13.11.2026; przebieg odmówi pracy, jeśli wynik jest niepełny
+identified_params: results/identify/main/base/identified.yaml
 
 periods:
   identification: {start: 2001-11-01, end: 2002-03-31}
