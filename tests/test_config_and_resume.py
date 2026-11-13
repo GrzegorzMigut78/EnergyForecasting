@@ -77,7 +77,8 @@ def test_identified_params_replace_first_stage_entirely():
                 "first": {"type": "svr", "kernel": "rbf", "C": 10.0},
                 "residual": {"order": [2, 0, 1]},
             }
-        }
+        },
+        "steps_done": ["arima", "tune"],
     }
     out = apply_identified(models, ident)[0]
     assert out["first"] == {"type": "svr", "kernel": "rbf", "C": 10.0}  # bez starego degree

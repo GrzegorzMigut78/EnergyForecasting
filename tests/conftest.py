@@ -30,7 +30,9 @@ def experiment(tmp_path):
     models = [m for m in cfg.models if m.name in FAST_MODELS]
     comb = cfg.combination.model_copy(update={"base_models": ["MR_ARIMA", "ARIMA"]})
     scen = [s for s in cfg.temperature_scenarios if s.kind != "noisy"]
-    ex = cfg.execution.model_copy(update={"output_dir": tmp_path, "n_jobs": 1})
+    ex = cfg.execution.model_copy(
+        update={"output_dir": tmp_path, "n_jobs": 1, "allow_provisional": True}
+    )
     return cfg.model_copy(
         update={
             "models": models,

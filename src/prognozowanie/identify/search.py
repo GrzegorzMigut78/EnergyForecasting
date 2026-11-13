@@ -4,11 +4,19 @@
    chronologiczna): model uczy się na oknie przed dobą walidacyjną i prognozuje 48 godzin;
    kryterium = MAE dla doby D+1. Benchmark strojony tą samą procedurą co modele bazowe,
    żeby porównanie z nim było uczciwe.
+   Sito: 5 najlepszych kandydatów strojenia sprawdzamy jako pełny model (SVR i sieć z korektą
+   ARIMA reszt, LightGBM sam) przy temperaturze z persystencji, i wybieramy najlepszego.
+   Strojenie pierwszego stopnia przy temperaturze zmierzonej jest tanie; sito dopasowuje
+   wybór do modelu, który faktycznie prognozuje, w warunkach wykonalnych operacyjnie.
 2. Wybór rzędów ARIMA (na szeregu i na resztach modeli pierwszego stopnia) tym samym
-   kryterium, spośród kandydatów z konfiguracji.
+   kryterium, spośród kandydatów z konfiguracji, dla wszystkich modeli z członem ARIMA
+   (także pomocniczych: HONG_ARIMA, ARIMA_S24).
 
+Doby walidacyjne są rozłożone równomiernie na dostępną część okresu identyfikacji (nie tylko
+na jego końcówkę), z krokiem niebędącym wielokrotnością tygodnia; ich daty trafiają do wyniku.
 Wszystkie doby walidacyjne i ich horyzonty leżą wewnątrz okresu identyfikacji.
-Wynik trafia do identified.yaml, który eksperyment wczytuje przez identified_params.
+Wynik trafia do identified.yaml (z listą wykonanych kroków i odciskiem danych), który
+eksperyment wczytuje przez identified_params.
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +37,8 @@ import pandas as pd
 import yaml
 
 from prognozowanie.backtest.engine import split_origin
-from prognozowanie.config import ExperimentConfig, apply_identified
+from prognozowanie.backtest.scenarios import scenario_temperatures
+from prognozowanie.config import ExperimentConfig, apply_identified, identification_complete
 from prognozowanie.data import Dataset
 from prognozowanie.models import build_model
 from prognozowanie.models.statistical import Sarima
@@ -51,16 +61,25 @@ def identification_period(
 
 
 def validation_origins(
-    cfg: ExperimentConfig, n: int, step: int = 1, period: tuple | None = None
+    cfg: ExperimentConfig, n: int, period: tuple | None = None
 ) -> pd.DatetimeIndex:
-    """Ostatnie n dób wydania (co 'step' dób), których horyzont mieści się w identyfikacji."""
+    """n dób wydania rozłożonych równomiernie na dostępnej części okresu identyfikacji.
+
+    Dostępna część: od pierwszej doby z pełnym oknem uczącym do ostatniej doby, której
+    horyzont mieści się w okresie. Krok nie jest wielokrotnością 7, żeby doby walidacyjne
+    nie wypadały w ten sam dzień tygodnia."""
     start, end = period or identification_period(cfg)
     h_days = cfg.forecast.horizon_hours // 24
+    first = start + pd.Timedelta(days=cfg.forecast.training_window_days)
     last = end - pd.Timedelta(days=h_days - 1)
-    idx = pd.date_range(end=last, periods=n * step, freq="D")[::-1][::step][::-1]
-    first_needed = idx.min() - pd.Timedelta(days=cfg.forecast.training_window_days)
-    if first_needed < start:
+    span = (last - first).days
+    if n < 1 or span < n - 1:
         raise ValueError("okres identyfikacji za krótki na okno uczące i doby walidacyjne")
+    step = span // (n - 1) if n > 1 else 1
+    if step > 1 and step % 7 == 0:
+        step -= 1
+    idx = pd.DatetimeIndex([last - pd.Timedelta(days=step * k) for k in range(n)][::-1])
+    assert idx.min() >= first
     return idx
 
 
@@ -127,19 +146,37 @@ TECHNICAL = {
 FIXED_KEYS = ("n_seeds", "max_iter", "cache_size", "trend", "lags")
 
 
+SIEVE_SIZE = 5  # tylu najlepszych kandydatów strojenia trafia do sita
+
+
+def _persistence_scenario(cfg: ExperimentConfig):
+    scen = [s for s in cfg.temperature_scenarios if s.kind == "persistence"]
+    return scen[0] if scen else None
+
+
+def _with_scenario(cfg, scen, hist, fut, origin) -> pd.DataFrame:
+    if scen is None:
+        return fut
+    _, temps = next(scenario_temperatures(scen, hist, fut, origin, cfg.seed))
+    return fut.assign(temp=temps)
+
+
 def tune_first_stage(
     cfg: ExperimentConfig,
     ds: Dataset,
     base_first: dict[str, Any],
     out_dir: Path,
     period: tuple,
+    full_spec: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Strojenie (Optuna) na pierwszym stopniu przy temperaturze zmierzonej, potem sito:
+    SIEVE_SIZE najlepszych kandydatów jako pełny model (full_spec) przy persystencji."""
     model_type = base_first["type"]
     fixed = {
         **TECHNICAL.get(model_type, {}),
         **{k: v for k, v in base_first.items() if k in FIXED_KEYS},
     }
-    origins = validation_origins(cfg, cfg.identification.tuning_origins, step=2, period=period)
+    origins = validation_origins(cfg, cfg.identification.tuning_origins, period=period)
     splits = [_split(cfg, ds, o) for o in origins]
 
     def objective(trial: optuna.Trial) -> float:
@@ -189,9 +226,45 @@ def tune_first_stage(
         log.info("%s: strojenie, %d prób do wykonania (%d już są)", model_type, remaining, finished)
         study.optimize(objective, n_trials=remaining, timeout=timeout)
     study.trials_dataframe().to_csv(out_dir / f"trials_{model_type}.csv", index=False)
-    best = {**dict(study.best_params), **fixed}
-    best["validation_mae_day2"] = study.best_value
-    log.info("%s: najlepsze MAE(D+1) %.3f, parametry %s", model_type, study.best_value, best)
+    done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    if not done:
+        raise RuntimeError(f"{model_type}: żadna próba strojenia nie zakończyła się poprawnie")
+    top = sorted(done, key=lambda t: t.value)[:SIEVE_SIZE]
+
+    best_trial, sieve_rows = top[0], []
+    scen = _persistence_scenario(cfg)
+    if full_spec is not None and scen is not None:
+        best_score = np.inf
+        for rank, t in enumerate(top, 1):
+            first = {"type": model_type, **t.params, **fixed}
+            spec = full_spec(first)
+            scores = []
+            for (hist, fut, actual), origin in zip(splits, origins, strict=True):
+                m = build_model(copy.deepcopy(spec), seed=cfg.seed).fit(hist)
+                pred = m.predict(_with_scenario(cfg, scen, hist, fut, origin))
+                scores.append(_mae_day2(pred, actual))
+            score = float(np.mean(scores))
+            sieve_rows.append(
+                {
+                    "rank_first_stage": rank,
+                    "trial": t.number,
+                    "mae_day2_first_stage_oracle": t.value,
+                    "mae_day2_full_persistence": score,
+                    **t.params,
+                }
+            )
+            if score < best_score:
+                best_trial, best_score = t, score
+        pd.DataFrame(sieve_rows).to_csv(out_dir / f"sieve_{model_type}.csv", index=False)
+    best = {**dict(best_trial.params), **fixed}
+    best["validation_mae_day2"] = best_trial.value
+    log.info(
+        "%s: wybrana próba %d (MAE D+1 pierwszego stopnia %.3f), parametry %s",
+        model_type,
+        best_trial.number,
+        best_trial.value,
+        best,
+    )
     return best
 
 
@@ -212,7 +285,7 @@ def select_es_variant(
 ) -> dict[str, Any]:
     """Wybiera wariant wygładzania wykładniczego (trend, tłumienie, inicjalizacja) o najmniejszym
     MAE doby D+1 pierwszego stopnia na tych samych dobach co strojenie SVR i sieci."""
-    origins = validation_origins(cfg, cfg.identification.tuning_origins, step=2, period=period)
+    origins = validation_origins(cfg, cfg.identification.tuning_origins, period=period)
     splits = [_split(cfg, ds, o) for o in origins]
     rows = []
     for variant in ES_VARIANTS:
@@ -327,6 +400,22 @@ def select_arima_orders(
     return chosen
 
 
+def _code_version() -> str | None:
+    try:
+        import subprocess
+
+        root = Path(__file__).resolve().parents[3]
+        out = subprocess.run(
+            ["git", "-C", str(root), "describe", "--always", "--dirty"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return out.stdout.strip() or None
+    except Exception:
+        return None
+
+
 def run_identification(
     cfg: ExperimentConfig,
     ds: Dataset,
@@ -337,7 +426,8 @@ def run_identification(
     """Wykonuje identyfikację i zapisuje identified.yaml w out_dir.
 
     Kroki można uruchamiać osobno: wynik wcześniejszego kroku (plik identified.yaml
-    w tym samym katalogu) jest wczytywany i uzupełniany.
+    w tym samym katalogu) jest wczytywany i uzupełniany. Wynik jest kompletny (i zdejmuje
+    flagę parametrów wstępnych) dopiero po obu krokach na tych samych danych.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     period = identification_period(cfg, as_of)
@@ -348,14 +438,32 @@ def run_identification(
         str(period[1].date()),
     ]:
         raise RuntimeError(f"{path} pochodzi z innego okresu identyfikacji; użyj innego katalogu")
-    base_specs = [m.model_dump() for m in cfg.models if m.role == "base"]
+    if previous and previous.get("dataset_sha256") != ds.source_sha256:
+        raise RuntimeError(f"{path} pochodzi z innych danych; użyj innego katalogu")
+    all_specs = [m.model_dump() for m in cfg.models]
     if previous:
-        base_specs = apply_identified(base_specs, previous)
-    specs = {s["name"]: s for s in base_specs}
+        all_specs = apply_identified(all_specs, previous)
+    specs = {s["name"]: s for s in all_specs}
+    steps_done = set(previous.get("steps_done", [])) if previous else set()
     result: dict[str, Any] = {
         "experiment": cfg.name,
         "identification_period": [str(period[0].date()), str(period[1].date())],
         "as_of": str((period[1] + pd.Timedelta(days=1)).date()),
+        "dataset_sha256": ds.source_sha256,
+        "code_version": _code_version(),
+        "created": dt.datetime.now().isoformat(timespec="seconds"),
+        "validation_origins": {
+            "tuning": [
+                str(o.date())
+                for o in validation_origins(cfg, cfg.identification.tuning_origins, period=period)
+            ],
+            "arima": [
+                str(o.date())
+                for o in validation_origins(
+                    cfg, cfg.identification.validation_origins, period=period
+                )
+            ],
+        },
         "models": copy.deepcopy(previous["models"]) if previous else {},
     }
     if "tune" in steps:
@@ -365,7 +473,11 @@ def run_identification(
             if spec["type"] == "two_stage" and first.get("type") in SPACES:
                 key = first["type"]
                 if key not in tuned:  # jeden typ modelu strojony raz
-                    best = tune_first_stage(cfg, ds, first, out_dir, period)
+
+                    def full(first_params, _spec=spec):
+                        return {**_spec, "first": first_params}
+
+                    best = tune_first_stage(cfg, ds, first, out_dir, period, full_spec=full)
                     params = {k: v for k, v in best.items() if k != "validation_mae_day2"}
                     tuned[key] = {"type": key, **params}
                     if key == "mlp":
@@ -376,7 +488,7 @@ def run_identification(
                 chosen = select_es_variant(cfg, ds, first, out_dir, period)
                 spec["first"] = copy.deepcopy(chosen)
                 result["models"].setdefault(name, {})["first"] = copy.deepcopy(chosen)
-        # benchmarki i inne modele samodzielne strojonych typów (LightGBM)
+        # benchmarki i inne modele samodzielne strojonych typów (LightGBM): to samo sito
         for m in cfg.models:
             if m.type in STANDALONE_TUNED:
                 own = {
@@ -384,11 +496,13 @@ def run_identification(
                     for k, v in m.model_dump().items()
                     if k not in ("name", "role", "provisional")
                 }
-                best = tune_first_stage(cfg, ds, own, out_dir, period)
+                best = tune_first_stage(cfg, ds, own, out_dir, period, full_spec=lambda p: p)
                 params = {k: v for k, v in best.items() if k != "validation_mae_day2"}
                 result["models"][m.name] = {"type": m.type, **params}
+                specs[m.name] = {**specs[m.name], **params}
+        # nowy pierwszy stopień unieważnia rzędy ARIMA dobrane do poprzedniego
+        steps_done = {"tune"}
     if "tune" in steps and "arima" not in steps:
-        # nowy pierwszy stopień unieważnia rzędy ARIMA dobrane do jego reszt
         for name in result["models"]:
             if result["models"][name].pop("residual", None) is not None:
                 log.warning("%s: rzędy ARIMA reszt usunięte; uruchom krok 'arima' ponownie", name)
@@ -400,6 +514,9 @@ def run_identification(
                 result["models"].setdefault(name, {})[key] = o
             else:
                 result["models"].setdefault(name, {}).update(o)
+        steps_done.add("arima")
+    result["steps_done"] = sorted(steps_done)
+    result["complete"] = identification_complete(result)
     path.write_text(yaml.safe_dump(result, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    log.info("wynik identyfikacji: %s", path)
+    log.info("wynik identyfikacji: %s (kompletny: %s)", path, result["complete"])
     return path

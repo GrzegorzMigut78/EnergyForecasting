@@ -84,7 +84,7 @@ def load_dataset(cfg: DatasetConfig) -> Dataset:
     df["dow"] = df.index.day_of_week
     df["hour"] = df.index.hour + 1
 
-    return Dataset(config=cfg, frame=df, log=log, source_sha256=_sha256(cfg.source.path))
+    return Dataset(config=cfg, frame=df, log=log, source_sha256=source_fingerprint(cfg))
 
 
 def _check_hourly(df: pd.DataFrame) -> None:
@@ -104,6 +104,18 @@ def _check_hourly(df: pd.DataFrame) -> None:
             raise ValueError(f"kolumna {col}: {n} braków")
     if not np.isfinite(df["load"]).all():
         raise ValueError("nieskończone wartości w load")
+
+
+def source_fingerprint(cfg: DatasetConfig) -> str:
+    """Odcisk wszystkich plików źródłowych zbioru. Przy jednym pliku: jego SHA-256 (jak w
+    data/README.md); przy osobnym pliku temperatur (GEFCom): SHA-256 z obu skrótów, więc
+    podmiana któregokolwiek pliku zmienia odcisk i blokuje wznowienie przebiegu."""
+    main = _sha256(cfg.source.path)
+    tpath = cfg.source.temperature.path
+    if tpath is None:
+        return main
+    combined = f"{main}|{_sha256(tpath)}".encode()
+    return hashlib.sha256(combined).hexdigest()
 
 
 def _sha256(path) -> str:

@@ -94,7 +94,13 @@ def cmd_run(a):
     if a.end:
         origins = origins[origins <= pd.Timestamp(a.end)]
     res = run_backtest(
-        cfg, ds, run_name=a.run_name, origins=origins, n_jobs=a.jobs, recompute=a.recompute
+        cfg,
+        ds,
+        run_name=a.run_name,
+        origins=origins,
+        n_jobs=a.jobs,
+        recompute=a.recompute,
+        allow_provisional=a.allow_provisional or None,
     )
     bad = [r for r in res if r.status != "ok"]
     print(f"Policzone doby: {len(res)}, z problemami: {len(bad)}")
@@ -162,6 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
             nargs="+",
             metavar="MODEL",
             help="przelicz wskazane modele (np. po zmianie ich specyfikacji); pozostałe zostają",
+        )
+        s.add_argument(
+            "--allow-provisional",
+            action="store_true",
+            help="dopuść parametry wstępne (tylko próba techniczna, nie wyniki)",
         )
         s.add_argument("--scenario", default="oracle")
         s.set_defaults(func=func)

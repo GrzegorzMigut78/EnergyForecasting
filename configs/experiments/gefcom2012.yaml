@@ -75,6 +75,20 @@ models:
   - {name: HONG, type: hong_regression, role: benchmark}
   # parametry drzew strojone w identyfikacji (jak SVR i sieć); do tego czasu domyślne
   - {name: LGBM, type: lightgbm, role: benchmark, provisional: true, lags: [48, 72, 168]}
+  # --- modele pomocnicze (poza rodzinami hipotez, decyzje z 12.11.2026)
+  # A1: HONG z tą samą korektą reszt co MR_ARIMA; zastępuje HONG w puli plus_hong
+  - name: HONG_ARIMA
+    type: two_stage
+    role: auxiliary
+    provisional: true
+    first: {type: hong_regression}
+    residual: *arima_resid
+  # ablacja dla R1: okres sezonowy 24 h zamiast 168 h (rzędy z identyfikacji)
+  - name: ARIMA_S24
+    role: auxiliary
+    provisional: true
+    <<: *arima_series
+    season: 24
 
 combination:
   base_models: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA]
@@ -83,7 +97,7 @@ combination:
   c0_fitted_hours: [48, 72, 168]  # C0 (artykuł), C0_H72, C0_H168
   # pula rozszerzona (sekcja 11): czy schemat korzysta z lepszego modelu bazowego
   extra_pools:
-    plus_hong: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, HONG]
+    plus_hong: [MR_ARIMA, ARIMA, ES_ARIMA, SVR_ARIMA, NN_ARIMA, HONG_ARIMA]
     # model o innej budowie (bez członu ARIMA): czy łączenie zyskuje na różnorodności błędów;
     # C0 w tej puli: wartości dopasowane drzew są niemal idealne, więc C0 odda LGBM prawie
     # całą wagę (ilustracja słabości wag z wartości dopasowanych)

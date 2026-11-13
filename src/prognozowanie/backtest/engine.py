@@ -28,7 +28,7 @@ import yaml
 from joblib import Parallel, delayed
 
 from prognozowanie.backtest.scenarios import NOISE_GENERATOR, scenario_temperatures
-from prognozowanie.config import ExperimentConfig, model_specs_for
+from prognozowanie.config import ExperimentConfig, check_identification_data, model_specs_for
 from prognozowanie.data import Dataset
 from prognozowanie.models import build_model
 
@@ -101,10 +101,15 @@ def run_origin(
         try:
             model = build_model(spec, seed=cfg.seed)
             model.fit(hist)
+            # czasy rozdzielone (uwaga audytora, R3): dopasowanie, jedna prognoza 48 h i cała
+            # pętla scenariuszy; poranne uruchomienie operacyjne = dopasowanie + jedna prognoza
+            info["seconds_fit"] = time.perf_counter() - t0
+            t_loop = time.perf_counter()
             two_stage = hasattr(model, "first_stage_forecast")
             cache: tuple[np.ndarray, np.ndarray | None] | None = None
             for scen_name, draw, temp in scen_temps:
                 if model.uses_temperature or cache is None:
+                    t_one = time.perf_counter()
                     f = fut.copy()
                     f["temp"] = temp
                     if two_stage:
@@ -116,6 +121,7 @@ def run_origin(
                         stage1, pred = None, model.predict(f)
                     if not np.all(np.isfinite(pred)):
                         raise FloatingPointError("prognoza zawiera wartości nieskończone lub NaN")
+                    info.setdefault("seconds_predict_one", time.perf_counter() - t_one)
                     if not model.uses_temperature:
                         cache = (pred, stage1)
                 else:
@@ -133,6 +139,7 @@ def run_origin(
                             stage1,
                         )
                     )
+            info["seconds_scenarios"] = time.perf_counter() - t_loop
             # wartości dopasowane z końca okna dla wszystkich modeli (wariant C0 z różną
             # liczbą godzin i C0 na pierwszym stopniu bez ponownego liczenia)
             fitted_series = [(name, model)]
@@ -288,6 +295,16 @@ def prepare_run_dir(cfg: ExperimentConfig, ds: Dataset, run_dir: Path) -> None:
     actual.to_parquet(run_dir / "actuals.parquet")
 
 
+def _cpu_name() -> str:
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor()
+
+
 def _log_invocation(cfg: ExperimentConfig, ds: Dataset, run_dir: Path, info: dict) -> None:
     """Każde wywołanie przebiegu zostawia ślad: pełna konfiguracja, środowisko, zakres prac."""
     stamp = time.strftime("%Y%m%dT%H%M%S")
@@ -300,6 +317,8 @@ def _log_invocation(cfg: ExperimentConfig, ds: Dataset, run_dir: Path, info: dic
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
+            "cpu": _cpu_name(),
+            "cpu_count": os.cpu_count(),
             "packages": _versions(),
             "dataset_sha256": ds.source_sha256,
             "dataset_log": ds.log,
@@ -420,7 +439,17 @@ def run_backtest(
     origins: pd.DatetimeIndex | None = None,
     n_jobs: int | None = None,
     recompute: list[str] | None = None,
+    allow_provisional: bool | None = None,
 ) -> list[OriginResult]:
+    allow = cfg.execution.allow_provisional if allow_provisional is None else allow_provisional
+    provisional = [m.name for m in cfg.models if m.provisional]
+    if provisional and not allow:
+        raise RuntimeError(
+            f"modele z parametrami wstępnymi (bez kompletnej identyfikacji): {provisional}. "
+            "Wskaż wynik identyfikacji (identified_params) albo, do próby technicznej, "
+            "uruchom z --allow-provisional."
+        )
+    check_identification_data(cfg, ds.source_sha256)
     run_dir = run_dir_for(cfg, run_name)
     prepare_run_dir(cfg, ds, run_dir)
     origins = origins if origins is not None else origins_for(cfg)
@@ -450,6 +479,7 @@ def run_backtest(
         {
             "origins": [str(origins.min()), str(origins.max()), len(origins)],
             "todo_per_model": per_model,
+            "n_jobs": n_jobs or cfg.execution.n_jobs,
             "recompute": sorted(recompute or ()),
         },
     )

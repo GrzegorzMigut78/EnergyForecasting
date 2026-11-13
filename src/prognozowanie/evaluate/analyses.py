@@ -161,19 +161,36 @@ def arima_ablation(losses: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_cost(run_dir: Path) -> pd.DataFrame:
-    """Czas dopasowania i prognozy modeli (sekundy na dobę) z metadanych przebiegu."""
+    """Czasy modeli (sekundy na dobę) z metadanych przebiegu, tylko udane doby:
+    dopasowanie, jedna prognoza 48 h (poranne uruchomienie = dopasowanie + jedna prognoza),
+    pętla po wszystkich scenariuszach i losowaniach (koszt badania, nie operacji), całość."""
     rows = []
     for f in (run_dir / "meta").glob("*/*.json"):
         info = json.loads(f.read_text(encoding="utf-8"))
-        rows.append({"model": info["model"], "seconds": info.get("seconds", np.nan)})
+        if info.get("status") != "ok":
+            continue
+        rows.append(
+            {
+                "model": info["model"],
+                "fit": info.get("seconds_fit", np.nan),
+                "predict_one": info.get("seconds_predict_one", np.nan),
+                "scenarios": info.get("seconds_scenarios", np.nan),
+                "total": info.get("seconds", np.nan),
+            }
+        )
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    return (
-        df.groupby("model")["seconds"]
-        .agg(days="size", mean="mean", median="median", max="max", total="sum")
-        .sort_values("mean")
+    df["operational"] = df["fit"] + df["predict_one"]
+    out = df.groupby("model").agg(
+        days=("total", "size"),
+        fit_median=("fit", "median"),
+        predict_one_median=("predict_one", "median"),
+        operational_median=("operational", "median"),
+        operational_p90=("operational", lambda x: x.quantile(0.9)),
+        research_total_hours=("total", lambda x: x.sum() / 3600),
     )
+    return out.sort_values("operational_median")
 
 
 def break_even(sens: pd.DataFrame) -> pd.DataFrame:

@@ -168,7 +168,9 @@ class ModelSpec(_Strict):
     model_config = ConfigDict(extra="allow", frozen=True)
     name: str
     type: str
-    role: Literal["base", "benchmark"] = "base"
+    # base: pula główna; benchmark: model odniesienia (H3); auxiliary: model pomocniczy do pul
+    # rozszerzonych i ablacji, poza rodzinami hipotez
+    role: Literal["base", "benchmark", "auxiliary"] = "base"
     provisional: bool = False  # True: parametry wymagają potwierdzenia w identyfikacji
 
 
@@ -202,6 +204,9 @@ class CombinationConfig(_Strict):
 class ExecutionConfig(_Strict):
     n_jobs: int = 1
     output_dir: Path = Path("results")
+    # przebieg na parametrach wstępnych (sprzed kompletnej identyfikacji) tylko świadomie:
+    # do prób technicznych, nigdy do wyników
+    allow_provisional: bool = False
 
 
 class IdentificationConfig(_Strict):
@@ -297,10 +302,15 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     raw = {k: v for k, v in raw.items() if not str(k).startswith("x-")}
     base = _project_root(path)
     ident = raw.get("identified_params")
+    identified = None
     if ident:
         ident_path = Path(ident) if Path(ident).is_absolute() else base / ident
-        raw["models"] = apply_identified(raw["models"], _read_yaml(ident_path))
+        identified = _read_yaml(ident_path)
+        raw["models"] = apply_identified(raw["models"], identified)
     cfg = ExperimentConfig.model_validate(raw)
+    if identified is not None:
+        # identyfikacja musi kończyć się przed pierwszą prognozą (także rozgrzewkową)
+        _check_as_of(identified, cfg.periods.forecast_start, ident)
     upd: dict[str, Any] = {}
     if not cfg.dataset.is_absolute():
         upd["dataset"] = (base / cfg.dataset).resolve()
@@ -320,12 +330,30 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     return cfg.model_copy(update=upd) if upd else cfg
 
 
+IDENTIFICATION_STEPS = frozenset({"tune", "arima"})
+
+
+def identification_complete(identified: dict[str, Any]) -> bool:
+    """Wynik identyfikacji jest kompletny, gdy zawiera oba kroki (strojenie i rzędy ARIMA
+    dobrane do reszt strojonego modelu)."""
+    return set(identified.get("steps_done", [])) >= IDENTIFICATION_STEPS
+
+
+def _check_as_of(identified: dict[str, Any], first_day: dt.date, source: Any) -> None:
+    as_of = identified.get("as_of")
+    if as_of is None or dt.date.fromisoformat(str(as_of)) > first_day:
+        raise ValueError(f"{source}: identyfikacja musi kończyć się przed {first_day} (as_of)")
+
+
 def apply_identified(models: list[dict[str, Any]], identified: dict[str, Any]) -> list[dict]:
     """Nakłada wynik identyfikacji na specyfikacje modeli.
 
     Człon 'first' jest zastępowany w całości (strojenie mogło zmienić np. jądro SVR, więc
     stare parametry nie mogą zostać); rzędy ARIMA są nadpisywane w obrębie członu.
+    Flaga 'provisional' jest zdejmowana tylko przy kompletnym wyniku identyfikacji: samo
+    strojenie bez kroku ARIMA zostawia startowe rzędy, więc model pozostaje wstępny.
     """
+    complete = identification_complete(identified)
     overrides = identified.get("models", {})
     out = []
     for spec in models:
@@ -337,7 +365,8 @@ def apply_identified(models: list[dict[str, Any]], identified: dict[str, Any]) -
                     spec[k] = copy.deepcopy(v)
                 else:
                     spec[k].update(v)
-            spec["provisional"] = False
+            if complete:
+                spec["provisional"] = False
         out.append(spec)
     return out
 
@@ -352,12 +381,31 @@ def model_specs_for(cfg: ExperimentConfig, day: dt.date) -> list[dict[str, Any]]
         raise ValueError(f"brak parametrów z identyfikacji obowiązujących dla doby {day}")
     entry = entries[-1]
     identified = _read_yaml(entry.params)
-    as_of = identified.get("as_of")
-    if as_of is None or dt.date.fromisoformat(str(as_of)) > entry.valid_from:
-        raise ValueError(
-            f"{entry.params}: identyfikacja musi kończyć się przed {entry.valid_from} (as_of)"
-        )
+    _check_as_of(identified, entry.valid_from, entry.params)
     return apply_identified(specs, identified)
+
+
+def identification_files(cfg: ExperimentConfig, project_root: Path | None = None) -> list[Path]:
+    """Pliki identyfikacji użyte przez eksperyment (pojedynczy albo z harmonogramu)."""
+    files = [e.params for e in cfg.identified_schedule]
+    if cfg.identified_params:
+        p = cfg.identified_params
+        if not p.is_absolute() and project_root is not None:
+            p = project_root / p
+        files.append(p)
+    return files
+
+
+def check_identification_data(cfg: ExperimentConfig, dataset_sha256: str) -> None:
+    """Każdy plik identyfikacji musi pochodzić z tych samych danych co przebieg."""
+    root = _project_root(cfg.dataset) if cfg.identified_params else None
+    for f in identification_files(cfg, root):
+        got = _read_yaml(f).get("dataset_sha256")
+        if got != dataset_sha256:
+            raise RuntimeError(
+                f"{f}: identyfikację wykonano na innych danych (odcisk {got}, przebieg "
+                f"{dataset_sha256}); powtórz identyfikację"
+            )
 
 
 def _project_root(config_path: Path) -> Path:

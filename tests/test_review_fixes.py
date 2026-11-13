@@ -152,13 +152,18 @@ def test_lightgbm_benchmark_is_tuned_in_identification(dataset, experiment, tmp_
     ident = experiment.identification.model_copy(update={"n_trials": 3, "tuning_origins": 2})
     cfg = experiment.model_copy(update={"models": models, "identification": ident})
     path = run_identification(cfg, dataset, tmp_path / "ident", steps=("tune",))
-    out = yaml.safe_load(path.read_text(encoding="utf-8"))["models"]["LGBM"]
+    result = yaml.safe_load(path.read_text(encoding="utf-8"))
+    out = result["models"]["LGBM"]
     assert out["type"] == "lightgbm" and out["lags"] == [48, 72, 168]
     assert {"n_estimators", "learning_rate", "num_leaves", "verbose"} <= set(out)
-    spec = next(
-        s
-        for s in apply_identified([m.model_dump() for m in models], {"models": {"LGBM": out}})
-        if s["name"] == "LGBM"
-    )
+    # samo strojenie: wynik niekompletny, model pozostaje wstępny
+    assert result["steps_done"] == ["tune"] and result["complete"] is False
+    assert result["dataset_sha256"] == dataset.source_sha256
+    assert (tmp_path / "ident" / "sieve_lightgbm.csv").exists()  # sito pod persystencją
+    specs = [m.model_dump() for m in models]
+    partial = next(s for s in apply_identified(specs, result) if s["name"] == "LGBM")
+    assert partial["provisional"] is True
+    full = {**result, "steps_done": ["arima", "tune"]}
+    spec = next(s for s in apply_identified(specs, full) if s["name"] == "LGBM")
     assert spec["provisional"] is False
     build_model(spec, seed=1).fit(synthetic_frame(days=30))
