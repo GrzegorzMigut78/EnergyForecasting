@@ -11,6 +11,7 @@ import json
 import logging
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from prognozowanie.config import ExperimentConfig
@@ -103,6 +104,7 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     test = pd.date_range(cfg.periods.test.start, cfg.periods.test.end, freq="D")
     arch_fc = archive[(archive["kind"] == "forecast") & archive["origin"].isin(test)]
     scale = mt.mase_scale(actuals["load"], test, cfg.forecast.training_window_days)
+    excluded = [(pd.Timestamp(p.start), pd.Timestamp(p.end)) for p in cfg.evaluation.excluded_data]
 
     def scenario_frame(scen: str) -> pd.DataFrame:
         parts = [arch_fc[arch_fc["scenario"] == scen]]
@@ -114,6 +116,9 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
         if not comb.empty:
             parts.append(comb[comb["origin"].isin(test)])
         fc = pd.concat(parts, ignore_index=True)
+        # plan, sekcja 1: bez prognoz, których okna uczące (także w historii wag) obejmują
+        # wyłączone okresy danych (kwiecień 2002 bez potwierdzenia)
+        fc = fc[an.clean_of_excluded(fc, excluded, cfg.forecast.training_window_days)]
         return mt.attach_actuals(fc, actuals).merge(scale, left_on="origin", right_index=True)
 
     out_dir = run_dir / "report"
@@ -128,11 +133,18 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     # wariantu dodatkowego (np. pula rozszerzona) nie wycinał dób z analizy głównej
     main_models = an.primary_set(fams, present) if fams else present
     scen_main, common_main, _ = _common(scen_raw, main_models)
-    scen_df, common, per_model = _common(scen_raw)  # wszystkie warianty (opisowo)
-    longest = max(map(len, per_model)) if len(per_model) else 0
-    short = {m: len(o) // 2 for m, o in per_model.items() if len(o) < longest}
+    # zestawienie wszystkich wariantów (opisowo) na dobach analizy głównej: warianty z kompletem
+    # tych dób na wspólnym zbiorze, warianty z niepełną historią (albo wyłączone regułą
+    # kwietnia) na swoich dobach, z liczbą dób w kolumnie n; nie zawężają zbioru pozostałym
+    keys = pd.MultiIndex.from_frame(scen_raw[["origin", "block"]])
+    on_main = scen_raw[keys.isin(list(common_main))]
+    per_model = on_main.assign(_key=list(pd.MultiIndex.from_frame(on_main[["origin", "block"]])))
+    per_model = per_model.groupby("model")["_key"].unique().map(set)
+    complete = [m for m, o in per_model.items() if o >= common_main]
+    short = {m: len(o) // 2 for m, o in per_model.items() if not o >= common_main}
+    scen_df, common, _ = _common(on_main, complete)
     common_days = {b: sum(1 for _, bb in common_main if bb == b) for b in (BLOCK1, DAY2)}
-    all_days = {b: sum(1 for _, bb in common if bb == b) for b in (BLOCK1, DAY2)}
+    used_all = {m: sum(1 for _, bb in o if bb == DAY2) for m, o in per_model.items()}
     d2 = scen_main[scen_main["block"] == DAY2]
 
     fails = failures(run_dir)
@@ -142,14 +154,13 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     for pool, _models in cfg.combination.pools().items():
         prefix = f"{pool}/" if pool else ""
         planned += [prefix + label for *_, label in method_variants(cfg)]
-    cov = an.coverage(
-        scen_raw, planned, len(test), set(main_models), common_days[DAY2], all_days[DAY2]
-    )
+    cov = an.coverage(scen_raw, planned, len(test), set(main_models), common_days[DAY2], used_all)
     cov.to_csv(out_dir / f"coverage_{scenario}.csv", index=False)
 
     main = mt.summary(scen_main, ["block", "model"]).reset_index()
     main.to_csv(out_dir / f"summary_main_{scenario}.csv", index=False)
-    summary_all = mt.summary(scen_df, ["block", "model"]).reset_index()
+    summary_all = mt.summary(on_main, ["block", "model"]).reset_index()
+    summary_all["full_main_days"] = summary_all["model"].isin(complete)
     summary_all.to_csv(out_dir / f"summary_{scenario}.csv", index=False)
     mt.summary(scen_main, ["block", "day_type", "model"]).reset_index().to_csv(
         out_dir / f"by_day_type_{scenario}.csv", index=False
@@ -189,7 +200,7 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
 
     # testy na dziennych stratach doby D+1 (średnia po losowaniach w scenariuszu losowym)
     losses = mt.daily_loss(d2)
-    losses_all = mt.daily_loss(scen_df[scen_df["block"] == DAY2])
+    losses_all = mt.daily_loss(on_main[on_main["block"] == DAY2])  # DM parami, na wspólnych dobach
     dm_ref = ref if ref in losses_all.columns else losses_all.columns[0]
     dm = mt.dm_table(losses_all, dm_ref)
     dm["p_holm_all"] = an.holm(dm["p_value"])  # opisowo: cała tabela jako jedna rodzina
@@ -226,6 +237,18 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     stab = None
     if not weights.empty:
         weights = weights[weights["origin"].isin(test)]  # bez dób rozgrzewki
+        if excluded:  # ta sama reguła wyłączonych okresów co dla prognoz
+            k_lab = weights["k"].fillna(0).astype(int)
+            probe = pd.DataFrame(
+                {
+                    "origin": weights["origin"],
+                    "model": weights["method"] + np.where(k_lab > 0, "_K" + k_lab.astype(str), ""),
+                    "block": np.where(weights["block"] == 2, DAY2, BLOCK1),
+                },
+                index=weights.index,
+            )
+            win = cfg.forecast.training_window_days
+            weights = weights[an.clean_of_excluded(probe, excluded, win)]
         stab = weight_stability(weights)
         stab.to_csv(out_dir / f"weight_stability_{scenario}.csv", index=False)
         for method in ("C1", "C2"):
@@ -236,7 +259,13 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
 
     # analizy dodatkowe (plan analizy, sekcja 4)
     extra: dict[str, pd.DataFrame] = {}
-    kp = an.k_profile(summary_all)
+    # profil K na dobach wspólnych dla wszystkich K (porównywalność między K), z C3 puli
+    k_models = [m for m in present if an._K.match(m) or m.split("/")[-1] == "C3"]
+    k_frame, k_common, _ = _common(on_main, k_models)
+    k_days = sum(1 for _, bb in k_common if bb == DAY2)
+    kp = an.k_profile(mt.summary(k_frame, ["block", "model"]).reset_index())
+    if not kp.empty:
+        kp["days"] = k_days
     if not kp.empty:
         kp.to_csv(out_dir / f"k_profile_{scenario}.csv", index=False)
         extra["k"] = kp
@@ -275,7 +304,8 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
     if not cost.empty:
         cost.to_csv(out_dir / "compute_cost.csv")
     if sens is not None:
-        be = an.break_even(sens, _no_temperature_models(cfg))
+        # tylko warianty z kompletem dób analizy głównej: porównanie na tych samych dobach
+        be = an.break_even(sens[sens["model"].isin(complete)], _no_temperature_models(cfg))
         if not be.empty:
             be.to_csv(out_dir / "break_even_temperature.csv", index=False)
             extra["be"] = be
@@ -335,12 +365,20 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
         f"Doby testowe: {test.min():%Y-%m-%d} - {test.max():%Y-%m-%d} ({len(test)}). "
         f"Analiza główna (warianty z rodzin hipotez) na dobach wspólnych dla tych wariantów: "
         f"blok D {common_days[BLOCK1]}, blok D+1 {common_days[DAY2]}. Zestawienie wszystkich "
-        f"wariantów (opisowo): blok D {all_days[BLOCK1]}, blok D+1 {all_days[DAY2]}. "
+        f"wariantów (opisowo) na tych samych dobach; warianty bez kompletu tych dób na swoich "
+        f"dobach (kolumna n w summary_{scenario}.csv). "
         f"Pokrycie każdego planowanego wariantu: coverage_{scenario}.csv.",
         "",
     ]
+    if excluded:
+        okresy = ", ".join(f"{a:%Y-%m-%d} - {b:%Y-%m-%d}" for a, b in excluded)
+        md += [
+            f"Wyłączone okresy danych: {okresy}. Para (wariant, doba wydania) jest oceniana, "
+            "gdy żadne okno uczące jej prognozy, także w historii wag, ich nie obejmuje.",
+            "",
+        ]
     if short:
-        md += [f"Modele z niepełną historią (liczba dób): {short}", ""]
+        md += [f"Warianty bez kompletu dób analizy głównej (liczba dób D+1): {short}", ""]
     if not fails.empty:
         md += [
             "Błędy modeli (doby):",
@@ -350,13 +388,19 @@ def evaluate_run(cfg: ExperimentConfig, run_dir: Path, scenario: str = "oracle")
         ]
     tab = summary_all.pivot(index="model", columns="block", values=["MAE", "RMSE", "MASE"])
     tab.columns = [f"{a} {b}" for a, b in tab.columns]
+    tab["doby D+1"] = pd.Series(used_all).reindex(tab.index)
     md += [
         "## Miary błędu wg bloku horyzontu (wszystkie warianty, opisowo)",
         "",
         "RMSE w scenariuszu losowym: pierwiastek ze średniej MSE po godzinach i losowaniach "
         "(nie średnia z RMSE poszczególnych losowań).",
         "",
-        tab.sort_values(f"MAE {DAY2}").round(3).to_markdown(),
+        # najpierw warianty na pełnym zbiorze dób, potem te z niepełną historią (mniej dób)
+        tab.assign(_full=tab.index.isin(complete))
+        .sort_values(["_full", f"MAE {DAY2}"], ascending=[False, True])
+        .drop(columns="_full")
+        .round(3)
+        .to_markdown(),
         "",
     ]
     if not prim.empty:

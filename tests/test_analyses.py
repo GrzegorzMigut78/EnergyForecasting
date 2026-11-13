@@ -75,6 +75,19 @@ def test_break_even_interpolates_crossing():
     assert be.loc["T", "reference"] == "N" and np.isclose(be.loc["T", "break_even_sd_day2"], 1.5)
 
 
+def test_break_even_variant_identical_to_reference():
+    sens = pd.DataFrame(
+        {
+            "model": ["S"] * 3 + ["N"] * 3,
+            "sd_day2": [0.0, 1.0, 2.0] * 2,
+            "MAE": [11.0, 11.0, 11.0] * 2,
+        }
+    )
+    be = an.break_even(sens, ["N"]).set_index("model")
+    assert np.isnan(be.loc["S", "break_even_sd_day2"])
+    assert be.loc["S", "note"] == "taki sam jak odniesienie na całej siatce"
+
+
 def test_k_profile_parses_pools_and_reference():
     summ = pd.DataFrame(
         {
@@ -149,3 +162,33 @@ def test_mae_cancellation_identity_and_asymmetric_loss():
     assert len(by_hour) == 24
     asym = an.asymmetric_loss(frame, "A")
     assert np.allclose(asym["U"] + asym["O"], asym["MAE"])
+
+
+def test_april_rule_first_clean_origins():
+    """Plan, sekcja 1: bez potwierdzenia kwietnia 2002 K <= 7 od 1.08, K = 14 od 8.08,
+    K = 28 od 22.08.2002; modele i metody bez historii od 24.07 (okno 84 dób)."""
+    from prognozowanie.evaluate.analyses import DAY2, clean_of_excluded
+
+    april = [(pd.Timestamp("2002-04-01"), pd.Timestamp("2002-04-30"))]
+    days = pd.date_range("2002-07-15", "2002-08-31")
+    rows = [
+        {"origin": d, "model": m, "block": blk}
+        for d in days
+        for m in ("MR_ARIMA", "C3", "C0_H168", "C1_K7", "plus_hong/C2_K14", "C1_K28")
+        for blk in ("D (1-24 h)", DAY2)
+    ]
+    f = pd.DataFrame(rows)
+    ok = clean_of_excluded(f, april, 84)
+    first = f[ok & (f["block"] == DAY2)].groupby("model")["origin"].min().dt.strftime("%m-%d")
+    assert first.to_dict() == {
+        "MR_ARIMA": "07-24",
+        "C3": "07-24",
+        "C0_H168": "07-24",
+        "C1_K7": "08-01",
+        "plus_hong/C2_K14": "08-08",
+        "C1_K28": "08-22",
+    }
+    # blok D sięga o jedną dobę krócej w przeszłość
+    first_d = f[ok & (f["block"] != DAY2)].groupby("model")["origin"].min()
+    assert first_d["C1_K7"] == pd.Timestamp("2002-07-31")
+    assert clean_of_excluded(f, [], 84).all()

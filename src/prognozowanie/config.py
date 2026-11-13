@@ -222,6 +222,11 @@ class EvaluationConfig(_Strict):
     # doby testowe oglądane przed zamrożeniem planu (pilotaże, przebiegi techniczne);
     # analiza wrażliwości: hipotezy główne bez tych dób
     seen_days: list[dt.date] = Field(default_factory=list)
+    # okresy danych, które nie mogą wejść do oceny (plan, sekcja 1: kwiecień 2002 bez
+    # potwierdzenia): para (wariant, doba wydania, blok) jest oceniana tylko wtedy, gdy żadne
+    # okno uczące użyte do jej prognozy, łącznie z oknami prognoz z historii wag, nie obejmuje
+    # tych okresów; stąd K = 14 od 8.08 i K = 28 od 22.08.2002
+    excluded_data: list[Period] = Field(default_factory=list)
 
 
 class ExecutionConfig(_Strict):

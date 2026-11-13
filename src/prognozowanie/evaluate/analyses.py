@@ -28,6 +28,28 @@ STAGE1 = "__stage1"
 _K = re.compile(r"^(?:(?P<pool>[^/]+)/)?(?P<method>C[0-9])_K(?P<k>\d+)$")
 
 
+def clean_of_excluded(
+    frame: pd.DataFrame, excluded: list[tuple[pd.Timestamp, pd.Timestamp]], window_days: int
+) -> pd.Series:
+    """Maska wierszy, których prognoza nie korzysta z wyłączonych okresów danych.
+
+    Prognoza z doby wydania D używa danych od D - W do końca D - 1 (W: okno uczące). Wariant
+    łączenia z historią K bloku b szacuje wagi na prognozach wydanych w dobach D-b-K+1 ... D-b,
+    więc sięga do D-b-K+1-W. Metody bez historii (C0, C3, C4) i modele: tylko okno doby D."""
+    ok = pd.Series(True, index=frame.index)
+    if not excluded or frame.empty:
+        return ok
+    origin = pd.to_datetime(frame["origin"]).dt.normalize()
+    k = frame["model"].str.extract(_K)["k"].astype(float).fillna(0)
+    b = np.where(frame["block"] == DAY2, 2, 1)
+    back = window_days + np.where(k > 0, k + b - 1, 0)
+    start = origin - pd.to_timedelta(back, unit="D")
+    last = origin - pd.Timedelta(days=1)
+    for ex_start, ex_end in excluded:
+        ok &= (start > ex_end) | (last < ex_start)
+    return ok
+
+
 def holm(p: pd.Series, m: int | None = None) -> pd.Series:
     """Poprawka Holma-Bonferroniego dla rodziny porównań.
 
@@ -220,7 +242,9 @@ def break_even(sens: pd.DataFrame, no_temperature: list[str]) -> pd.DataFrame:
         y = curve[m].to_numpy() - ref
         sign = np.sign(y)
         crossings = np.where(np.diff(sign) != 0)[0]
-        if y[0] >= 0:
+        if np.allclose(y, 0.0, atol=1e-9):  # np. wybór (C6) zawsze trafiający w odniesienie
+            be, note = np.nan, "taki sam jak odniesienie na całej siatce"
+        elif y[0] >= 0:
             be, note = 0.0, "gorszy już przy temperaturze zmierzonej"
         elif not len(crossings):
             be, note = np.nan, f"lepszy na całej siatce (do {x[-1]:g})"
@@ -319,10 +343,11 @@ def coverage(
     n_test_days: int,
     main_models: set[str],
     main_days: int,
-    all_days: int,
+    all_days: dict[str, int],
 ) -> pd.DataFrame:
     """Planowane warianty (uwaga audytora): doby testu, doby dostępne (z prognozą D+1)
-    i doby użyte w analizie głównej oraz w zestawieniu wszystkich wariantów."""
+    i doby użyte w analizie głównej oraz w zestawieniu wszystkich wariantów (all_days: doby
+    D+1 danego wariantu w tym zestawieniu)."""
     d2 = frame[frame["block"] == DAY2]
     avail = d2.groupby("model")["origin"].nunique()
     rows = []
@@ -335,7 +360,7 @@ def coverage(
                 "available_days": n_av,
                 "main_analysis": m in main_models,
                 "used_main_days": main_days if m in main_models and n_av else 0,
-                "used_all_days": all_days if n_av else 0,
+                "used_all_days": int(all_days.get(m, 0)),
             }
         )
     return pd.DataFrame(rows)

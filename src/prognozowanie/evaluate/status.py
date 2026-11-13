@@ -71,5 +71,15 @@ def run_status(cfg: ExperimentConfig, run_dir: Path, origins: pd.DatetimeIndex) 
     tab["done"] = tab["done"].fillna(0).astype(int)
     tab["missing"] = len(origins) - tab["done"]
     size = sum(p.stat().st_size for p in (run_dir / "forecasts").rglob("*.parquet")) / 2**20
-    lines += [tab.round(3).to_markdown(), "", f"Rozmiar archiwum prognoz: {size:.1f} MB."]
+    lines += [
+        tab.round(3).to_markdown(),
+        "",
+        "Kody zbieżności (con: model, fir: pierwszy stopień, res: człon reszt): SARIMA metodą CSS "
+        "minimalizowana BFGS (scipy), kod 1 = limit iteracji, kod 2 = utrata precyzji w "
+        "wyszukiwaniu liniowym przy końcu optymalizacji (sprawdzone 13.11.2026: ponowny start "
+        "BFGS i L-BFGS-B z tego punktu kończą się w nim z kodem 0, inny punkt startowy nie daje "
+        "lepszej wartości funkcji celu), kod 3 = wartości nieskończone. Awarie: kolumna failed.",
+        "",
+        f"Rozmiar archiwum prognoz: {size:.1f} MB.",
+    ]
     return "\n".join(lines)

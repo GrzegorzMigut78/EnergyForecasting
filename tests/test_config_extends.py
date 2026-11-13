@@ -17,8 +17,13 @@ def test_pilot_differs_from_main_only_in_name_and_periods():
     assert str(pilot["periods"]["test"]["end"]) == "2002-07-31"
     # okres identyfikacji odziedziczony mimo nadpisania innych kluczy 'periods'
     assert pilot["periods"]["identification"] == main["periods"]["identification"]
-    same = set(main) - {"name", "description", "periods"}
+    same = set(main) - {"name", "description", "periods", "evaluation"}
     assert {k: pilot[k] for k in same} == {k: main[k] for k in same}
+    # w ocenie różni się tylko wyłączenie kwietnia (okna lipca go obejmują)
+    assert pilot["evaluation"]["excluded_data"] == []
+    assert main["evaluation"]["excluded_data"]
+    rest = set(main["evaluation"]) - {"excluded_data"}
+    assert {k: pilot["evaluation"][k] for k in rest} == {k: main["evaluation"][k] for k in rest}
     raw = {k: v for k, v in pilot.items() if not str(k).startswith("x-")}
     raw.pop("identified_params")
     ExperimentConfig.model_validate(raw)
