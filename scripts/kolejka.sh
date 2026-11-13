@@ -11,8 +11,10 @@
 # Nic nie jest przekazywane do powłoki (bez eval): argumenty trafiają wprost do programu.
 #
 # Uruchomienie (okno zostaje otwarte):  bash ~/EnergyForecasting/scripts/kolejka.sh
-# Zatrzymanie: Ctrl+C (bieżące zadanie zostanie przerwane i trafi do failed/).
+# Zatrzymanie: Ctrl+C. Bieżące zadanie zostaje przerwane razem z procesami potomnymi
+# (osobna grupa procesów), plik zadania trafia do failed/, log dostaje wpis o przerwaniu.
 set -uo pipefail
+set -m # zadania w tle we własnej grupie procesów: Ctrl+C nie zostawia ich osieroconych
 
 REPO="${REPO:-$HOME/EnergyForecasting}"
 Q="${KOLEJKA:-/mnt/c/EnergyForecasting/kolejka}"
@@ -53,6 +55,26 @@ execute() { # wykonuje zweryfikowane polecenie w katalogu projektu
   esac
 }
 
+CUR_PID="" CUR_FILE="" CUR_LOG=""
+stop_queue() { # Ctrl+C / SIGTERM: przerwij bieżące zadanie z całą jego grupą procesów
+  if [ -n "$CUR_PID" ] && kill -0 "$CUR_PID" 2>/dev/null; then
+    kill -TERM -- "-$CUR_PID" 2>/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$CUR_PID" 2>/dev/null || break; sleep 1; done
+    kill -KILL -- "-$CUR_PID" 2>/dev/null
+    echo "=== przerwane $(date -Is) (zatrzymanie kolejki)" >> "$CUR_LOG"
+    [ -f "$CUR_FILE" ] && mv "$CUR_FILE" "$Q/failed/"
+  elif [ -n "$CUR_PID" ]; then # zadanie zdążyło się skończyć: zwykłe domknięcie
+    wait "$CUR_PID"
+    local rc=$?
+    echo "=== koniec $(date -Is): kod $rc" >> "$CUR_LOG"
+    if [ "$rc" -eq 0 ]; then mv "$CUR_FILE" "$Q/done/"; else mv "$CUR_FILE" "$Q/failed/"; fi
+  fi
+  rm -f "$Q/current"
+  echo "Kolejka zatrzymana."
+  exit 130
+}
+trap stop_queue INT TERM
+
 run_job() {
   local f="$1" name line log rc pid
   name=$(basename "$f" .job)
@@ -69,12 +91,15 @@ run_job() {
   echo "$name" > "$Q/current"
   execute "${args[@]}" >> "$log" 2>&1 &
   pid=$!
+  CUR_PID=$pid CUR_FILE=$f CUR_LOG=$log
   while kill -0 "$pid" 2>/dev/null; do # sygnał życia także podczas długiego zadania
     date -Is > "$Q/heartbeat"
-    sleep 30
+    sleep 10 &
+    wait $! # przerywalne: Ctrl+C obsłużony od razu
   done
   wait "$pid"
   rc=$?
+  CUR_PID=""
   echo "=== koniec $(date -Is): kod $rc" >> "$log"
   if [ "$rc" -eq 0 ]; then mv "$f" "$Q/done/"; else mv "$f" "$Q/failed/"; fi
   rm -f "$Q/current"
