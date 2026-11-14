@@ -56,5 +56,7 @@ def test_ml_control_differs_from_main_only_in_sarima_method():
     a = json.dumps(main["models"], sort_keys=True).replace('"css"', '"ml"')
     assert a == json.dumps(ml["models"], sort_keys=True)
     assert '"css"' not in json.dumps(ml["models"])
-    same = set(main) - {"name", "description", "periods", "models"}
+    same = set(main) - {"name", "description", "periods", "models", "execution"}
     assert {k: ml[k] for k in same} == {k: main[k] for k in same}
+    # wykonanie: tylko liczba równoległych dób (pamięć SARIMA ML), poza migawką wejść
+    assert ml["execution"] == {**main.get("execution", {}), "n_jobs": 1}
