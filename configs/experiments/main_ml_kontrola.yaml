@@ -6,6 +6,10 @@
 extends: main.yaml
 name: main_ml_kontrola
 description: 'Kontrola: SARIMA metodą dokładnej wiarygodności, wydania 1-31.10.2002.'
+# jeden dzień naraz: SARIMA ML przy okresie 168 h bierze około 5 GB pamięci na model;
+# 14.11.2026 przy dwóch naraz kolejka przestała działać po 11 dobach (ustawienie wykonania,
+# poza migawką wejść, nie zmienia prognoz)
+execution: {n_jobs: 1}
 periods:
   forecast_start: 2002-09-22
   test: {start: 2002-10-01, end: 2002-10-31}
