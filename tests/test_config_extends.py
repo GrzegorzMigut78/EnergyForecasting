@@ -45,3 +45,16 @@ def test_extends_lists_replaced_dicts_merged(tmp_path):
     )
     got = _read_experiment_yaml(tmp_path / "child.yaml")
     assert got == {"name": "base", "lst": [9], "d": {"a": 1, "b": {"c": 5, "e": 3}}}
+
+
+def test_ml_control_differs_from_main_only_in_sarima_method():
+    """Kontrola estymacji: te same modele co w main.yaml, tylko SARIMA metodą ML."""
+    import json
+
+    main = _read_experiment_yaml(ROOT / "configs/experiments/main.yaml")
+    ml = _read_experiment_yaml(ROOT / "configs/experiments/main_ml_kontrola.yaml")
+    a = json.dumps(main["models"], sort_keys=True).replace('"css"', '"ml"')
+    assert a == json.dumps(ml["models"], sort_keys=True)
+    assert '"css"' not in json.dumps(ml["models"])
+    same = set(main) - {"name", "description", "periods", "models"}
+    assert {k: ml[k] for k in same} == {k: main[k] for k in same}
