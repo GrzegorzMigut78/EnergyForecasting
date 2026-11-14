@@ -4,8 +4,11 @@ C1_K2 i modele pojedyncze, wydania 1.11.2002-29.06.2003, doba D+1, oracle i pers
 Różnica MAE (odświeżane minus stałe; ujemna: odświeżanie pomaga), bootstrap blokowy 7 dób,
 DM (HAC + HLN, h = 1) bez korekty Holma, opisowo. Dodatkowo podział na kwartały."""
 
-import sys, glob
+import glob
+import sys
+
 import pandas as pd
+
 from prognozowanie.evaluate import metrics as mt
 from prognozowanie.evaluate.inference import bootstrap_ci
 
