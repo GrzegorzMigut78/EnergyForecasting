@@ -158,3 +158,15 @@ Zapisana 15.11.2026, zatwierdzona 15.11.2026 przed obliczeniem (Grzegorz Migut):
 **Ochrona wyników zamrożonych.** Osobny skrypt czyta archiwum przebiegów tylko do odczytu i zapisuje wyniki do `results/<przebieg>/po_wynikach/regularyzacja/`. Sumy kontrolne SHA-256 wszystkich plików w `results/main/report`, `results/main/combined`, `results/gefcom2012/report` i `results/gefcom2012/combined` są liczone przed i po obliczeniu i wpisywane do sekcji 9.
 
 **Ograniczenie, które ujawniamy.** Pomysł ściągania wag do równych wynika z zobaczenia, że średnia wygrywa. Analiza odpowiada więc na pytanie recenzenta, ale nie może zmienić tezy.
+
+### 10.2 Pula z LightGBM w roli puli głównej
+
+Zapisana 15.11.2026 na prośbę Grzegorza Miguta, przed obliczeniem: analiza dodatkowa z ciekawości po wynikach, tak też opisywana w artykule.
+
+**Powód.** Pula z LightGBM (`plus_lgbm`, zaplanowana jako rozszerzona pula opisowa) dała najniższe MAE średniej na ElecEner. Pytanie: czy wnioski H1–H3 zmieniają się, gdy szósty model o innej konstrukcji jest pełnoprawnym członem puli.
+
+**Metoda.** Z archiwum, bez nowych prognoz modeli. Rodziny jak w sekcji 3, z wariantami puli `plus_lgbm` w miejsce puli głównej: H1 `plus_lgbm/C1_K2`, `_K3`, `_K7` kontra `plus_lgbm/C3`; H2 `plus_lgbm/C0` kontra `plus_lgbm/C1_K2`; H3 osiem modeli pojedynczych kontra `plus_lgbm/C1_K2`. Te same doby, test DM, Holm z planowaną liczebnością rodziny i reguła potwierdzenia w dwóch scenariuszach, ale wynik wyłącznie opisowy (słowo „potwierdzone” nie pada). Dodatkowo analiza 10.1 (ściąganie wag, te same wartości ψ, z n = 6) na tej puli oraz różnica `plus_lgbm/C3` minus `C3` z przedziałem bootstrap. ElecEner i GEFCom2012.
+
+**Ochrona wyników zamrożonych.** Jak w 10.1: osobny skrypt, wyniki w `results/main/po_wynikach/pula_lgbm/`, sumy kontrolne przed i po.
+
+**Ograniczenie, które ujawniamy.** Pulę wybrano do tej analizy, bo wypadła najlepiej. Wynik może więc tylko opisać zachowanie metod w puli bardziej zróżnicowanej, nie może zmienić tezy.
