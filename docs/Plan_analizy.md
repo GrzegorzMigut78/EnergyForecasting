@@ -132,3 +132,28 @@ Zmiany po zamrożeniu (etykieta `plan-v2`), z datą i uzasadnieniem.
 | 14.11.2026 | Przebieg kwartalny (punkt 18): z parametrami z identyfikacji przed 1.02.2003 (SVR, jądro wielomianowe, C = 0,82) solver pierwszego stopnia SVR_ARIMA osiągnął limit iteracji (2 mln) w 88 z 89 wydań 1.02-30.04.2003; prognozy powstały. Bez przeliczeń (limit iteracji jest częścią procedury); w opisie punktu 18 wynik SVR_ARIMA dla tego kwartału z zastrzeżeniem. | Tylko analiza dodatkowa 18. |
 | 14.11.2026 | Konfiguracja kontroli estymacji z sekcji 4 (`main_ml_kontrola.yaml`): modele i parametry jak w `main.yaml`, wszystkie człony SARIMA metodą dokładnej wiarygodności, wydania 1-31.10.2002, rozgrzewka od 22.09.2002 (test sprawdza, że różni się tylko metoda). | Brak na przebieg główny. |
 | 14.11.2026 | Kontrola estymacji przerwana po 11 z 40 dób (kolejka przestała działać około 14:25, prawdopodobnie brak pamięci przy dwóch modelach SARIMA ML naraz); wznowienie z jednym dniem naraz (`execution.n_jobs: 1`). | Brak: ustawienie wykonania, policzone doby zostają. |
+
+## 10. Analizy dodane po wynikach
+
+Analizy w tej sekcji powstały po obejrzeniu wyników przebiegu głównego (ocena 13.11.2026). Każda jest opisana tu przed obliczeniem, z datą, i oznaczona w artykule jako dodana po wynikach. Nie zmieniają rodzin hipotez H1–H3 ani ich wyników.
+
+### 10.1 Regresja łącząca ze ściąganiem wag do równych
+
+Projekt z 15.11.2026, do zatwierdzenia przed obliczeniem.
+
+**Powód.** Regresja łącząca (C1) przegrała ze średnią (C3) przy każdym K. Przewidywane pytanie recenzenta: czy wystarczyłoby ograniczyć szum wag, ściągając je do wag równych.
+
+**Metoda.** Wariant C9 łączy archiwalne prognozy C1 i C3 tej samej doby, bloku, K, scenariusza i losowania: prognoza C9 = ψ · prognoza C1 + (1 − ψ) · prognoza C3. Jest to dokładnie regresja z wagami w = ψ · w_C1 + (1 − ψ) / n i wyrazem wolnym ψ · a_C1 (Diebold i Pauly 1990; Stock i Watson 2004). Przy ψ = 1 to C1, przy ψ = 0 to C3. Nic nie jest szacowane od nowa i nie powstaje żadna nowa prognoza modelu.
+
+**Wartości ψ, ustalone z góry, wszystkie raportowane:**
+
+1. Reguła Stocka i Watsona: ψ = max(0, 1 − κ · n / (T − 1 − n)), gdzie n to liczba modeli w puli (5), T = 24 · K godzin historii, κ ∈ {0,25; 0,5; 1}. Reguła zależy tylko od K i n, nie od danych testu.
+2. Stała siatka: ψ ∈ {0,25; 0,5; 0,75}.
+
+**Zakres.** Pula główna; K ∈ {2, 3, 7, 14, 28}; ElecEner i GEFCom2012; scenariusze oracle i persystencja; doba D+1; te same doby co w analizie głównej i w profilu K (reguła kwietnia bez zmian).
+
+**Porównania, wyłącznie opisowe.** Dla każdej pary (K, ψ): różnica MAE C9 minus C1 i C9 minus C3, przedział bootstrap (bloki 7 dób), test DM bez korekty Holma. Żadnego wyboru „najlepszego” ψ. Wynik podajemy jako krzywą MAE w funkcji ψ dla każdego K.
+
+**Ochrona wyników zamrożonych.** Osobny skrypt czyta archiwum przebiegów tylko do odczytu i zapisuje wyniki do `results/<przebieg>/po_wynikach/regularyzacja/`. Sumy kontrolne SHA-256 wszystkich plików w `results/main/report`, `results/main/combined`, `results/gefcom2012/report` i `results/gefcom2012/combined` są liczone przed i po obliczeniu i wpisywane do sekcji 9.
+
+**Ograniczenie, które ujawniamy.** Pomysł ściągania wag do równych wynika z zobaczenia, że średnia wygrywa. Analiza odpowiada więc na pytanie recenzenta, ale nie może zmienić tezy.
