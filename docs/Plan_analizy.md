@@ -139,7 +139,7 @@ Analizy w tej sekcji powstały po obejrzeniu wyników przebiegu głównego (ocen
 
 ### 10.1 Regresja łącząca ze ściąganiem wag do równych
 
-Projekt z 15.11.2026, do zatwierdzenia przed obliczeniem.
+Zapisana 15.11.2026, zatwierdzona 15.11.2026 przed obliczeniem (Grzegorz Migut): analiza dodatkowa z ciekawości po wynikach, tak też opisywana w artykule.
 
 **Powód.** Regresja łącząca (C1) przegrała ze średnią (C3) przy każdym K. Przewidywane pytanie recenzenta: czy wystarczyłoby ograniczyć szum wag, ściągając je do wag równych.
 
