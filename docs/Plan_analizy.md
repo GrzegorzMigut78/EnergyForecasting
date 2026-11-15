@@ -147,7 +147,7 @@ Projekt z 15.11.2026, do zatwierdzenia przed obliczeniem.
 
 **Wartości ψ, ustalone z góry, wszystkie raportowane:**
 
-1. Reguła Stocka i Watsona: ψ = max(0, 1 − κ · n / (T − 1 − n)), gdzie n to liczba modeli w puli (5), T = 24 · K godzin historii, κ ∈ {0,25; 0,5; 1}. Reguła zależy tylko od K i n, nie od danych testu.
+1. Reguła Stocka i Watsona: ψ = max(0, 1 − κ · n / (T − 1 − n)), n = 5 modeli, κ ∈ {0,25; 0,5; 1}, w dwóch wersjach liczby obserwacji: (a) T = 24 · K godzin, jak w dosłownym zastosowaniu reguły; (b) T = K dób, bo błędy godzin tej samej doby są silnie skorelowane i doba jest bliższa niezależnej obserwacji. Wersja (a) daje ψ od 0,88 do 1,00, czyli prawie bez ściągania; wersja (b) daje ψ = 0 dla K ≤ 7 i od 0,38 do 0,94 dla K = 14 i 28. Reguła zależy tylko od K i n, nie od danych testu.
 2. Stała siatka: ψ ∈ {0,25; 0,5; 0,75}.
 
 **Zakres.** Pula główna; K ∈ {2, 3, 7, 14, 28}; ElecEner i GEFCom2012; scenariusze oracle i persystencja; doba D+1; te same doby co w analizie głównej i w profilu K (reguła kwietnia bez zmian).
