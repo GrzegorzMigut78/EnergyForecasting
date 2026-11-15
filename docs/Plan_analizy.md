@@ -132,6 +132,7 @@ Zmiany po zamrożeniu (etykieta `plan-v2`), z datą i uzasadnieniem.
 | 14.11.2026 | Przebieg kwartalny (punkt 18): z parametrami z identyfikacji przed 1.02.2003 (SVR, jądro wielomianowe, C = 0,82) solver pierwszego stopnia SVR_ARIMA osiągnął limit iteracji (2 mln) w 88 z 89 wydań 1.02-30.04.2003; prognozy powstały. Bez przeliczeń (limit iteracji jest częścią procedury); w opisie punktu 18 wynik SVR_ARIMA dla tego kwartału z zastrzeżeniem. | Tylko analiza dodatkowa 18. |
 | 14.11.2026 | Konfiguracja kontroli estymacji z sekcji 4 (`main_ml_kontrola.yaml`): modele i parametry jak w `main.yaml`, wszystkie człony SARIMA metodą dokładnej wiarygodności, wydania 1-31.10.2002, rozgrzewka od 22.09.2002 (test sprawdza, że różni się tylko metoda). | Brak na przebieg główny. |
 | 14.11.2026 | Kontrola estymacji przerwana po 11 z 40 dób (kolejka przestała działać około 14:25, prawdopodobnie brak pamięci przy dwóch modelach SARIMA ML naraz); wznowienie z jednym dniem naraz (`execution.n_jobs: 1`). | Brak: ustawienie wykonania, policzone doby zostają. |
+| 15.11.2026 | Analiza 10.1 policzona skryptem `scripts/po_wynikach_regularyzacja.py` z archiwum tylko do odczytu; wynik w `results/main/po_wynikach/regularyzacja/regularyzacja_C9.csv` (SHA-256 89cc6473…a431d). Sumy kontrolne 288 plików wyników zamrożonych (raporty i łączenie, ElecEner i GEFCom) przed i po obliczeniu identyczne: skrót listy 7a5b5875…7931ec. | Brak na wyniki zamrożone. |
 
 ## 10. Analizy dodane po wynikach
 
