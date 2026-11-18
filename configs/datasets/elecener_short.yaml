@@ -1,0 +1,30 @@
+# Zbiór ElecEner Short: plik pierwszej wersji artykułu (inny szereg niż ElecEner Long). Wartości przesunięte o nieznaną stałą (anonimizacja).
+# Surowy plik nie jest zmieniany: wszystkie korekty są tutaj, z uzasadnieniem.
+
+name: elecener_short
+description: >
+  ElecEner Short, plik pierwszej wersji artykułu, 01.11.2002-31.01.2003 (plan analizy 10.3);
+  temperatura dobowa jak w ElecEner Long. CSV z scripts/przygotuj_short.py.
+
+source:
+  loader: csv_hourly
+  path: data/raw/ElecEner_Short.csv
+  date_column: Data
+  hour_column: Godzina
+  hour_base: 1
+  load_column: Zapotrzebowanie
+  temperature:
+    columns: [Temperatura]
+
+units:
+  load: "do potwierdzenia u właściciela danych"
+  temperature: "°C"
+
+dst_policy: as_is   # każda doba ma 24 godziny; sposób wyrównania nieznany
+
+calendar:
+  country: PL
+  timezone: Europe/Warsaw
+  holiday_feature:
+    exclude_weekdays: [6]          # definicja z artykułu: święta niewypadające w niedzielę
+    extra_month_days: ["12-24"]    # Wigilia, jak w pierwotnej wersji artykułu

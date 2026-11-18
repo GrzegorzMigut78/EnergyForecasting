@@ -1,0 +1,208 @@
+# Wygenerowane przez scripts/konfiguracje_short.py (plan 10.3); nie edytować.
+name: short_long_84
+description: 'Plan 10.3: ElecEner Short, okno 84 dni, parametry z identyfikacji ElecEner
+  Long (do 31.03.2002).'
+dataset: configs/datasets/elecener_short.yaml
+seed: 20261111
+periods:
+  identification:
+    start: 2001-11-01
+    end: 2002-03-31
+  forecast_start: '2003-01-24'
+  test:
+    start: '2003-01-24'
+    end: '2003-01-30'
+forecast:
+  horizon_hours: 48
+  training_window_days: 84
+  origin_hour: 0
+  fitted_hours_saved: 168
+temperature_scenarios:
+- name: oracle
+  kind: oracle
+- name: persistence
+  kind: persistence
+models:
+- name: MR_ARIMA
+  type: two_stage
+  provisional: false
+  first:
+    type: regression
+  residual:
+    type: sarima
+    order:
+    - 1
+    - 0
+    - 1
+    seasonal_order:
+    - 1
+    - 0
+    - 0
+    season: 168
+    method: css
+- type: sarima
+  order:
+  - 2
+  - 0
+  - 1
+  seasonal_order:
+  - 0
+  - 1
+  - 1
+  season: 168
+  method: css
+  name: ARIMA
+  provisional: false
+- name: ES_ARIMA
+  type: two_stage
+  provisional: false
+  first:
+    type: exp_smoothing
+    trend: null
+    damped: false
+    initialization: heuristic
+    season: 168
+  residual:
+    type: sarima
+    order:
+    - 1
+    - 0
+    - 1
+    seasonal_order:
+    - 0
+    - 0
+    - 1
+    season: 168
+    method: css
+- name: SVR_ARIMA
+  type: two_stage
+  provisional: false
+  first:
+    type: svr
+    kernel: poly
+    C: 0.3319795134345999
+    epsilon: 0.39682073015053715
+    gamma: 0.1788322388175426
+    degree: 3
+    coef0: 0.2595178154866694
+    max_iter: 2000000
+    cache_size: 1000
+  residual:
+    type: sarima
+    order:
+    - 2
+    - 0
+    - 1
+    seasonal_order:
+    - 0
+    - 1
+    - 1
+    season: 168
+    method: css
+- name: NN_ARIMA
+  type: two_stage
+  provisional: false
+  first:
+    type: mlp
+    hidden_layer_sizes: 14
+    activation: tanh
+    alpha: 1.546745938151062e-05
+    tol: 3.7353612715932336e-06
+    solver: lbfgs
+    n_seeds: 5
+  residual:
+    type: sarima
+    order:
+    - 1
+    - 0
+    - 1
+    seasonal_order:
+    - 1
+    - 0
+    - 0
+    season: 168
+    method: css
+- name: SNAIVE
+  type: seasonal_naive
+  role: benchmark
+  lag: 168
+- name: HONG
+  type: hong_regression
+  role: benchmark
+- name: LGBM
+  type: lightgbm
+  role: benchmark
+  provisional: false
+  lags:
+  - 48
+  - 72
+  - 168
+  n_estimators: 505
+  learning_rate: 0.03513702174572533
+  num_leaves: 59
+  min_child_samples: 8
+  colsample_bytree: 0.6565447699033121
+  reg_lambda: 0.12398528450889876
+  verbose: -1
+combination:
+  base_models:
+  - MR_ARIMA
+  - ARIMA
+  - ES_ARIMA
+  - SVR_ARIMA
+  - NN_ARIMA
+  methods:
+  - C0
+  - C1
+  - C2
+  - C3
+  - C4
+  - C5
+  - C6
+  - C7
+  - C8
+  k_days:
+  - 2
+  - 3
+  - 7
+  - 14
+  - 28
+  c0_fitted_hours:
+  - 48
+  - 72
+  - 168
+evaluation:
+  excluded_data: []
+  families:
+    H1:
+      question: czy regresja łącząca wygrywa ze zwykłą średnią
+      reference: C3
+      compare:
+      - C1_K2
+      - C1_K3
+      - C1_K7
+    H2:
+      question: czy wagi z wartości dopasowanych (procedura pierwotna) są gorsze od
+        wag z prognoz, na tych samych 48 obserwacjach
+      reference: C1_K2
+      compare:
+      - C0
+    H3:
+      question: czy regresja łącząca wygrywa z każdym modelem pojedynczym i benchmarkiem
+      reference: C1_K2
+      compare:
+      - MR_ARIMA
+      - ARIMA
+      - ES_ARIMA
+      - SVR_ARIMA
+      - NN_ARIMA
+      - SNAIVE
+      - HONG
+      - LGBM
+  confirm_scenarios:
+  - oracle
+  - persistence
+  alpha: 0.05
+execution:
+  n_jobs: 2
+  output_dir: results/short
