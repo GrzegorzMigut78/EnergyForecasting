@@ -171,3 +171,21 @@ Zapisana 15.11.2026 na prośbę Grzegorza Miguta, przed obliczeniem: analiza dod
 **Ochrona wyników zamrożonych.** Jak w 10.1: osobny skrypt, wyniki w `results/main/po_wynikach/pula_lgbm/`, sumy kontrolne przed i po.
 
 **Ograniczenie, które ujawniamy.** Pulę wybrano do tej analizy, bo wypadła najlepiej. Wynik może więc tylko opisać zachowanie metod w puli bardziej zróżnicowanej, nie może zmienić tezy.
+
+### 10.3 Ćwiczenie na pliku pierwszej wersji (ElecEner Short)
+
+Zapisana 19.11.2026 na prośbę Pana Profesora, przed obliczeniem części B, C i D. Część A obejrzana wstępnie tego samego dnia przed zapisem: podział okna z artykułu na doby D i D+1, średnia i mediana pięciu modeli na tych samych 48 godzinach, współczynniki regresji łączącej. Analiza dodatkowa, wyłącznie opisowa.
+
+**Dane.** `ElecEner_Short_d.xlsx`, 1.11.2002–31.01.2003 (2208 godzin, 92 doby). Daty odtworzone z miesiąca, dnia miesiąca i godziny; zgodność z kolumną dnia tygodnia sprawdzona. Zapotrzebowanie to inny szereg niż ElecEner Long (korelacja godzinowa 0,983, poziom około połowy Long), temperatura jest ta sama co w Long. Bez korekt. Plik też jest przesunięty o nieznaną stałą, więc MAPE porównujemy tylko z pierwszą wersją; miarą główną zostaje MAE.
+
+**Część A: okno z artykułu.** Z kolumn pliku, bez szacowania modeli: MAPE i MAE regresji łączącej, pięciu modeli, średniej, mediany oraz C2, C5, C6, C7 i C8 oszacowanych na tych samych 48 godzinach wartości dopasowanych; osobno doba D, doba D+1 i godziny; MAPE w próbie i poza próbą; współczynniki z błędami standardowymi; korelacje wartości dopasowanych.
+
+**Część B: stabilność wag.** Regresja łącząca szacowana na każdym 48-godzinnym oknie wartości dopasowanych dostępnym w pliku (przesuw co 24 godziny), zastosowana do tych samych prognoz z artykułu. Rozkład MAPE i współczynników pokazuje, jak wynik 3,57% zależy od wyboru okna. Wartości dopasowane pochodzą z jednego oszacowania każdego modelu, więc zmienia się tylko podzbiór 48 godzin.
+
+**Część C: okno przesuwane.** Potok jak w przebiegu głównym: prognoza o północy na 48 godzin, cel doba D+1, scenariusze temperatury zmierzonej i persystencji. Dwa okna uczące: 84 dni (7 dób wydania, 24–30.01.2003) i 56 dni (35 dób, 27.12.2002–30.01.2003). Dwa zestawy parametrów modeli: z pierwszej wersji (SVR, sieć, rzędy ARIMA z opisu pliku; wygładzanie jak w konfiguracji tymczasowej) oraz z identyfikacji na ElecEner Long (dane sprzed 1.04.2002, niezależne od pliku). Łączenie: metody z przebiegu głównego, K do granicy dostępnej historii. Ocena opisowa: MAE i MAPE doby D+1 i obu dób; przy oknie 56 dni test DM bez korekty Holma, z zastrzeżeniem małej mocy.
+
+**Część D: porównanie z ElecEner Long.** Te same doby wydania w archiwum przebiegu głównego (C0, C1_K2, C3, modele pojedyncze), bez nowych obliczeń.
+
+**Ochrona wyników zamrożonych.** Osobne konfiguracje i katalog `results/short/`, archiwum przebiegów głównych tylko do odczytu, sumy kontrolne przed i po.
+
+**Ograniczenie, które ujawniamy.** 7 dób nie pozwala na żaden wniosek statystyczny, 35 dób na wniosek bardzo słaby, a okno 56 dni różni się od artykułu. Ćwiczenie ilustruje, nie rozstrzyga.
