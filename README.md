@@ -1,7 +1,7 @@
 # Prognozowanie godzinowego zapotrzebowania na energię: symulacja operacyjna
 
 Kod do eksperymentu z artykułu o wielomodelowym prognozowaniu zapotrzebowania
-(wersja po recenzjach). Realizuje metodykę opisaną w dokumencie „Metodyka eksperymentu”:
+(wersja po recenzjach). Realizuje metodykę opisaną w planie analizy (`docs/Plan_analizy.md`):
 prognoza wydawana o północy na 48 godzin, codzienna estymacja na przesuwanym oknie
 84 dób, archiwum prognoz z każdej doby i porównanie sposobów łączenia modeli.
 
