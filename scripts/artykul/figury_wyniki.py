@@ -42,7 +42,7 @@ NAME = {
     "C5": "C5 inverse-MSE weights",
     "C6": "C6 selection",
     "C3": "C3 simple mean",
-    "C0": "C0 first version",
+    "C0": "C0",
     "C1_K2": "C1, K = 2",
     "C1_K28": "C1, K = 28",
     "HONG": "HONG",
