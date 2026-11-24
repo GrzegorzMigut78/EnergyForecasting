@@ -30,7 +30,7 @@ rows = [
 ]
 plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9})
 fig = plt.figure(figsize=(7.2, 4.8))
-ax = fig.add_axes([0.40, 0.42, 0.57, 0.52])
+ax = fig.add_axes([0.40, 0.42, 0.54, 0.52])
 ax2 = fig.add_axes([0.02, 0.02, 0.96, 0.30])
 
 for i, (lab, a, b, col) in enumerate(rows):
@@ -87,9 +87,9 @@ def box(x, y, w, txt, fc, bold=False):
 ax2.text(0, 1.45, "Models", va="center")
 ax2.text(0, 0.55, "Weights", va="center")
 box(2.0, 1.2, 3.7, "84-day training window", "#ffffff")
-box(6.1, 1.2, 1.8, "Day D (h 1–24)", "#deebf7")
-box(8.05, 1.2, 1.9, "Day D+1 (h 25–48)", "#9dc3e6", bold=True)
-box(3.3, 0.3, 2.4, "Past forecasts, last K days", "#f4b9a0")
+box(6.1, 1.2, 1.65, "Day D (h 1–24)", "#deebf7")
+box(7.85, 1.2, 2.1, "Day D+1 (h 25–48)", "#9dc3e6", bold=True)
+box(2.95, 0.3, 2.75, "Past forecasts, last K days", "#f4b9a0")
 ax2.axvline(5.9, ymin=0.02, ymax=0.98, color="#2f6fb3", ls="--", lw=0.9)
 ax2.text(
     5.9,
